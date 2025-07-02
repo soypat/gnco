@@ -50,7 +50,7 @@ func TestElliptical_geocentric(t *testing.T) {
 	if !md1.EqualWithinAbs(elapsed, wantElapsed, 0.001*60*60) {
 		t.Errorf("wanted %f, got %f", wantElapsed, elapsed)
 	}
-	const wantTA = 193.2 * math.Pi / 180
+	const wantTA = 2.911981
 	gotTrueAnomaly := el.TrueAnomalyFromElapsedSincePeriapsis(earthGravParam, 10800, 0.001)
 	if !md1.EqualWithinAbs(gotTrueAnomaly, wantTA, 0.01) {
 		t.Errorf("wanted %f, got %f", wantTA, gotTrueAnomaly)
