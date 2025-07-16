@@ -61,12 +61,12 @@ func (g GeocentricCoords) InertialCoords(epochTime float64) (sBII md3.Vec, TGI m
 
 // EarthFixedCoords returns the planet-centerd, planet-fixed (ECEF) frame of reference coordinates. These rotate with the planet. See Earth-centered, earth fixed.
 func (g GeocentricCoords) EarthFixedCoords(epochTime float64) (sBIE md3.Vec) {
-	slon, clon := math.Sincos(g.Long + g.w.weii*epochTime)
+	slon, clon := math.Sincos(g.Long + g.w.Rotation*epochTime)
 	slat, clat := math.Sincos(g.Lat)
 	sBIE.X = clat * clon
 	sBIE.Y = clat * slon
 	sBIE.Z = slat
-	radius := g.Elev + g.w.radius
+	radius := g.Elev + g.w.Radius
 	return md3.Scale(radius, sBIE)
 }
 
@@ -97,7 +97,7 @@ func (g GeocentricCoords) TGE() md3.Mat3 {
 }
 
 func (g GeocentricCoords) Radius() float64 {
-	return g.w.radius + g.Elev
+	return g.w.Radius + g.Elev
 }
 
 // AGravG returns gravity acceleration in geographic coordinates. [m.s^-2]
@@ -114,11 +114,11 @@ func (g GeodesicCoords) AGravG() (gravityVec md3.Vec) {
 	w := g.c.w
 	dbi := g.c.Radius()
 	dum1 := w.G() / (dbi * dbi)
-	dum3 := w.semiMajorAxis / dbi
+	dum3 := w.SemiMajorAxis / dbi
 	dum3 *= dum3 // square it, much faster than Pow
 	sinlat, coslat := math.Sincos(g.c.Lat)
-	gravityVec.X = -dum1 * dum2 * w.c20 * dum3 * sinlat * coslat
-	gravityVec.Z = dum1 * (1 + dum2/2*w.c20*dum3*(3*sinlat*sinlat-1))
+	gravityVec.X = -dum1 * dum2 * w.C20 * dum3 * sinlat * coslat
+	gravityVec.Z = dum1 * (1 + dum2/2*w.C20*dum3*(3*sinlat*sinlat-1))
 	return gravityVec
 }
 
