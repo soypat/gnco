@@ -100,6 +100,11 @@ func (g GeocentricCoords) Radius() float64 {
 	return g.w.Radius + g.Elev
 }
 
+// HASL returns height above sea level [m].
+func (g GeocentricCoords) HASL() float64 {
+	return g.w.HASL(g.Elev)
+}
+
 // AGravG returns gravity acceleration in geographic coordinates. [m.s^-2]
 func (g GeocentricCoords) AGravG() (gravityVec md3.Vec) {
 	dbi := g.Radius()
@@ -127,6 +132,9 @@ func (g *GeodesicCoords) SetFromEarthFixedCoords(sBIE md3.Vec, epochTime float64
 }
 
 func (g GeodesicCoords) World() *World { return g.c.w }
+
+// HASL returns height above sea level [m].
+func (g GeodesicCoords) HASL() float64 { return g.c.HASL() }
 
 func (g GeodesicCoords) Geocentric() GeocentricCoords { return g.c }
 

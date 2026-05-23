@@ -98,6 +98,15 @@ func (w *World) HASLToElevation(hasl float64) float64 {
 	return w.seaLevelHeight() + hasl
 }
 
+// HASL returns height above sea level [m] for an elevation above the reference sphere.
+// It is the inverse of HASLToElevation.
+func (w *World) HASL(elev float64) float64 {
+	if w.seaLevelRadius == 0 {
+		return elev
+	}
+	return elev - w.seaLevelHeight()
+}
+
 // TEI returns the [T]^{EI} transformation tensor given the epochTime in seconds.
 func (w *World) TEI(epochTime float64) md3.Mat3 {
 	daysPerSec := 1. / w.Day()
