@@ -110,26 +110,22 @@ SOLVE:
 	h2 := h * h
 
 	for j := range F {
-		// aux = y + h*c[j] + F*h*h*a[j]
+		// aux = y + h*c[j]*dy + h²*Σ A[j][i]*F[i]
+		// F[i] are from the current step's already-evaluated stages (i < j),
+		// so each stage correctly builds on all previous stages of this step.
 		hc := h * rkn12c[j]
-		aux = md3.Add(y, md3.Scale(hc, dy)) //AddScaledVec(y, hc, dy)
+		aux = md3.Add(y, md3.Scale(hc, dy))
 		for iF := 0; iF < j; iF++ {
 			aux = md3.Add(aux, md3.Scale(h2*rkn12A[j][iF], F[iF]))
 		}
 		yv[j] = aux
 		tv[j] = t + hc
-	}
+		fun(F[j:j+1], tv[j:j+1], yv[j:j+1]) // evaluate stage j immediately so F[j] is available for j+1
 
-	fun(F[:], tv[:], yv[:])
-
-	for j := range F {
-		// finally F[:,j] = Func( aux ) @ t+h*c[j]
 		fj := F[j]
-		// Calculate high order h*F*b
 		rk.hFDbhat = md3.Add(rk.hFDbhat, md3.Scale(h*rkn12bphat[j], fj))
 		rk.hFbhat = md3.Add(rk.hFbhat, md3.Scale(h*rkn12bhat[j], fj))
 		if adaptive {
-			// Low order h*F*b for error estimation if user requested tolerance.
 			rk.hFb = md3.Add(rk.hFb, md3.Scale(h*rkn12b[j], fj))
 			rk.hFDb = md3.Add(rk.hFDb, md3.Scale(h*rkn12bp[j], fj))
 		}

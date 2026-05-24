@@ -5,10 +5,13 @@
 [![Go](https://github.com/soypat/gnco/actions/workflows/go.yml/badge.svg)](https://github.com/soypat/gnco/actions/workflows/go.yml)
 [![sourcegraph](https://sourcegraph.com/github.com/soypat/gnco/-/badge.svg)](https://sourcegraph.com/github.com/soypat/gnco?badge)
 
-gnco provides logic for projectile trajectory calculation. See [`parabolic-projectile`](./examples/parabolic-projectile/parabolic.go)
-for a basic example of use to recreate a parabolic trajectory of a point mass with no external forces.
+gnco provides logic for projectile trajectory calculation on a rotating Earth model.
 
+## Examples
 
+- [`parabolic-projectile`](./examples/parabolic-projectile/parabolic.go) — minimal example: parabolic trajectory of a point mass with no external forces, demonstrating the integrator and coordinate system basics.
+
+- [`5dof-rocket`](./examples/5dof-rocket/main.go) — 5-DOF sounding rocket simulation. A single-stage solid-fuel rocket launches from a geographic site at 85° elevation with Earth rotation, ISA atmosphere, drag, and a launch-tower hold to prevent a gravity turn at low speed.
 
 ## Install
 How to install package with newer versions of Go (+1.16):

@@ -19,12 +19,16 @@ type Elliptical struct {
 	// plane float64
 }
 
+// NewCircular creates a circular orbit with radius r in meters.
 func NewCircular(r float64) (Elliptical, error) {
 	return NewElliptical(r, r)
 }
 
+// NewElliptical creates an elliptical orbit from apoapsis radius ra and
+// periapsis radius rp, both in meters. ra must be greater than or equal to rp.
+// Parabolic and hyperbolic orbits (eccentricity >= 1) are not supported.
 func NewElliptical(ra, rp float64) (Elliptical, error) {
-	if ra < rp || ra < 0 {
+	if ra < rp || ra <= 0 {
 		return Elliptical{}, fmt.Errorf("got bad argument to NewOrbit: ra=%.5gkm, rp=%.5gkm", ra/1e3, rp/1e3)
 	}
 	if ra == rp {
@@ -33,7 +37,7 @@ func NewElliptical(ra, rp float64) (Elliptical, error) {
 	o := Elliptical{ra: ra, rp: rp}
 	e := o.Eccentricity()
 	if e >= 1 || e < 0 {
-		return Elliptical{}, fmt.Errorf("bad orbit eccentricity, got %.3g. Orbit does not expect parabolic orbits", e)
+		return Elliptical{}, fmt.Errorf("bad orbit eccentricity, got %.3g. Orbit does not expect parabolic/hyperbolic orbits", e)
 	}
 	return o, nil
 }
@@ -169,9 +173,29 @@ func (o Elliptical) ElapsedSincePeriapsis(gravParam, trueAnomaly float64) float6
 	return M * T / (2 * math.Pi)
 }
 
+// TrueAnomalyFromElapsedSincePeriapsis returns the true anomaly for a given
+// elapsed time since periapsis passage. It is the inverse of [Elliptical.ElapsedSincePeriapsis].
+//
+// The eccentric anomaly E is solved from Kepler's equation (M = E - e·sin E)
+// using Newton-Raphson iteration with the given tolerance. Returns NaN if the
+// solver does not converge.
+//
+// tol is an absolute tolerance in radians on the Kepler equation residual.
+// Solver convergence is independent of orbit size or gravParam — those only
+// affect how elapsedSincePeriapsis maps to mean anomaly before solving.
+// The implied position accuracy scales with semimajor axis a: position error ≈ a·tol.
+//   - 1e-6 rad → ~7 m at LEO (a=6800 km), ~42 m at GEO (a=42000 km)
+//   - 1e-8 rad → ~7 cm at LEO, ~42 cm at GEO
+//   - 1e-10 rad → ~1 mm at LEO, ~4 mm at GEO
+//
+// Values below 1e-12 offer no benefit due to float64 rounding. A value of 1e-8
+// is suitable for most applications.
 func (o Elliptical) TrueAnomalyFromElapsedSincePeriapsis(gravParam, elapsedSincePeriapsis, tol float64) float64 {
+	if elapsedSincePeriapsis == 0 {
+		return 0
+	}
 	T := o.Period(gravParam)
-	Me := 2 * math.Pi * elapsedSincePeriapsis / T
+	Me := math.Mod(2*math.Pi*elapsedSincePeriapsis/T, 2*math.Pi)
 	e := o.Eccentricity()
 	solver := md1.DefaultNewtonRaphsonSolver()
 	solver.Tolerance = tol
@@ -181,9 +205,15 @@ func (o Elliptical) TrueAnomalyFromElapsedSincePeriapsis(gravParam, elapsedSince
 	if convergedIn < 0 {
 		return math.NaN()
 	}
-	rhs := math.Sqrt((1+e)/(1-e)) * math.Tan(E/2)
-	trueAnomaly := 2 * math.Atan(rhs) // En (3.10a)
-	return math.Abs(trueAnomaly)
+	sinE, cosE := math.Sincos(E)
+	denom := 1 - e*cosE
+	sinV := math.Sqrt(1-e*e) * sinE / denom
+	cosV := (cosE - e) / denom
+	v := math.Atan2(sinV, cosV)
+	if v < 0 {
+		v += 2 * math.Pi
+	}
+	return v
 }
 
 // DistanceToCenter solves the orbit equation as given by Curtis, Howard in

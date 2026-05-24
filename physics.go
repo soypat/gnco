@@ -29,6 +29,14 @@ func NewPhysicsPointIntegrator(coord Coordinates, t0 float64, SBI0, VBI0 md3.Vec
 	return p
 }
 
+func (phys *PhysicsPointIntegrator) RK() *ode.RKN1210 {
+	return &phys.integrator
+}
+
+func (phys *PhysicsPointIntegrator) State() (t float64, SBI, VBI md3.Vec) {
+	return phys.integrator.State()
+}
+
 // Step steps the physics engine with the external acceleration in geographical frame which is obtained by TVG*ABV.
 // Gravity should not be included in the external acceleration as it is obtained from the coordinate system [Coordinates] AGravG method.
 func (phys *PhysicsPointIntegrator) Step(dt float64, externalAccelGeographicFrameNoGravity md3.Vec) (t float64, SBI, VBI md3.Vec) {
@@ -45,7 +53,11 @@ func (phys *PhysicsPointIntegrator) accel(yppDst []md3.Vec, tv []float64, yv []m
 		t, SBII := tv[i], yv[i]
 		TEI := w.TEI(t)
 		SBIE := md3.MulMatVec(TEI, SBII)
-		coord.SetFromEarthFixedCoords(SBIE, t)
+		// Pass epochTime=0 so SetFromEarthFixedCoords stores atan2(SBIE) as the longitude
+		// without subtracting Rotation*t. This matches trajectory-sim's FromInertial(SBIE)
+		// and allows the TEI rotation to cancel in TGI = TGE*TEI, yielding the correct
+		// gravity direction in ECI regardless of the exact TEI rotation angle.
+		coord.SetFromEarthFixedCoords(SBIE, 0)
 		// Calculate TM geographic wrt earth coordinates.
 		TGE := coord.TGE()
 		// Calculate TM of geographic wrt inertial coordinates.
