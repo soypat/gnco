@@ -35,8 +35,8 @@ func run() error {
 		nOrbits     = 5
 	)
 	earth := gnco.NewEarth()
-	rA := earth.Radius + earth.HASLToElevation(apogeeHASL)
-	rP := earth.Radius + earth.HASLToElevation(perigeeHASL)
+	rA := earth.Radius() + earth.HASLToElevation(apogeeHASL)
+	rP := earth.Radius() + earth.HASLToElevation(perigeeHASL)
 	orbit, err := orbits.NewElliptical(rA, rP)
 	if err != nil {
 		return err
@@ -63,8 +63,6 @@ func run() error {
 
 	fmt.Printf("%-8s  %-12s  %-12s  %-12s\n", "t [h]", "radius [km]", "speed [m/s]", "|ΔE/E₀|")
 	fmt.Println("--------  ------------  ------------  ------------")
-	SBI0 = md3.Vec{X: 6.771146e+06}
-	VBI0 = md3.Vec{Y: 7700.584943721379}
 	integrator := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
 	t, SBI, VBI := integrator.State()
 	nextPrint := 0.0
@@ -87,9 +85,6 @@ func run() error {
 
 		t, SBI, VBI = integrator.Step(dt, md3.Vec{})
 		totalSteps++
-		if totalSteps == 1 {
-			fmt.Printf("gnco Step %d: %+v\n\n", totalSteps, integrator.RK())
-		}
 	}
 
 	fmt.Println()

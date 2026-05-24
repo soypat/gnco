@@ -57,7 +57,7 @@ func run() error {
 	VBG0 := gnco.GeographicVectorFromElevationAndBearing(launchElevRad, launchBearing, 0.01)
 
 	// Earth rotation vector (ECI z-axis).
-	weii := md3.Vec{Z: earth.Rotation}
+	weii := md3.Vec{Z: earth.Rotation()}
 
 	// Initial inertial velocity: geographic velocity rotated to inertial + Earth surface velocity.
 	// VBI = TGI^T * VBG + (ω × SBI)

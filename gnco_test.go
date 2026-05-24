@@ -122,6 +122,145 @@ func TestWorldHASL(t *testing.T) {
 	}
 }
 
+func TestTEI(t *testing.T) {
+	const tol = 1e-12
+	earth := gnco.NewEarth()
+
+	t.Run("identity at t=0", func(t *testing.T) {
+		tei := earth.TEI(0)
+		for _, e := range []md3.Vec{{X: 1}, {Y: 1}, {Z: 1}} {
+			got := md3.MulMatVec(tei, e)
+			if d := md3.Norm(md3.Sub(got, e)); d > tol {
+				t.Errorf("TEI(0)*%v = %v, want identity", e, got)
+			}
+		}
+	})
+
+	t.Run("identity after one sidereal day", func(t *testing.T) {
+		tei := earth.TEI(earth.Day())
+		for _, e := range []md3.Vec{{X: 1}, {Y: 1}, {Z: 1}} {
+			got := md3.MulMatVec(tei, e)
+			if d := md3.Norm(md3.Sub(got, e)); d > tol {
+				t.Errorf("TEI(day)*%v = %v, want identity", e, got)
+			}
+		}
+	})
+
+	// After a quarter rotation, the ECEF frame has rotated π/2 CCW relative to ECI.
+	// An ECI +X point is therefore at ECEF -Y (Earth has moved past it).
+	t.Run("quarter rotation ECI+X maps to ECEF -Y", func(t *testing.T) {
+		quarterDay := math.Pi / 2 / earth.Rotation()
+		tei := earth.TEI(quarterDay)
+		got := md3.MulMatVec(tei, md3.Vec{X: 1})
+		want := md3.Vec{Y: -1}
+		if d := md3.Norm(md3.Sub(got, want)); d > tol {
+			t.Errorf("TEI(quarterDay)*{X:1} = %v, want %v", got, want)
+		}
+	})
+
+	// Inverse: an ECEF +X surface point appears at ECI +Y after a quarter rotation.
+	t.Run("quarter rotation ECEF+X maps to ECI +Y", func(t *testing.T) {
+		quarterDay := math.Pi / 2 / earth.Rotation()
+		tei := earth.TEI(quarterDay)
+		got := md3.MulMatVecTrans(tei, md3.Vec{X: 1})
+		want := md3.Vec{Y: 1}
+		if d := md3.Norm(md3.Sub(got, want)); d > tol {
+			t.Errorf("TEI(quarterDay)^T*{X:1} = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("orthonormal at various times", func(t *testing.T) {
+		for _, tt := range []float64{0, 100, 3600, 86400} {
+			tei := earth.TEI(tt)
+			// TEI * TEI^T = I: check each basis vector round-trips.
+			for _, e := range []md3.Vec{{X: 1}, {Y: 1}, {Z: 1}} {
+				v := md3.MulMatVecTrans(tei, e)
+				got := md3.MulMatVec(tei, v)
+				if d := md3.Norm(md3.Sub(got, e)); d > tol {
+					t.Errorf("TEI(%g)*TEI^T*%v = %v, want %v", tt, e, got, e)
+				}
+			}
+		}
+	})
+}
+
+func TestGeocentricECIRoundTrip(t *testing.T) {
+	const angTol = 1e-10 // rad (~1 mm on Earth's surface)
+	const elevTol = 1e-3 // m
+	earth := gnco.NewEarth()
+
+	cases := []struct {
+		name      string
+		longDeg   float64
+		latDeg    float64
+		hasl      float64
+		epochTime float64
+	}{
+		{"equator t=0", 0, 0, 400e3, 0},
+		{"equator t=1h", 0, 0, 400e3, 3600},
+		{"NE quadrant t=1h", 45, 30, 200e3, 3600},
+		{"SW quadrant t=30min", -60, -45, 100e3, 1800},
+		{"prime meridian t=1day", 0, 60, 0, 86400},
+		{"high latitude t=6h", 15, 75, 500e3, 6 * 3600},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := earth.GeocentricFromDegrees(tc.longDeg, tc.latDeg, earth.HASLToElevation(tc.hasl))
+			// EarthFixedCoords returns the ECI position of this surface-fixed point at time t.
+			sBII := g.EarthFixedCoords(tc.epochTime)
+			// GeocentricFromEarthFixedCoords inverts: given ECI position + epoch, recover ECEF coords.
+			g2 := earth.GeocentricFromEarthFixedCoords(sBII, tc.epochTime)
+			if d := math.Abs(g2.Long - g.Long); d > angTol {
+				t.Errorf("Long round-trip: got %g, want %g (diff %g)", g2.Long, g.Long, d)
+			}
+			if d := math.Abs(g2.Lat - g.Lat); d > angTol {
+				t.Errorf("Lat round-trip: got %g, want %g (diff %g)", g2.Lat, g.Lat, d)
+			}
+			if d := math.Abs(g2.Elev - g.Elev); d > elevTol {
+				t.Errorf("Elev round-trip: got %g, want %g (diff %g m)", g2.Elev, g.Elev, d)
+			}
+		})
+	}
+}
+
+func TestPhysicsKeplerianEnergy(t *testing.T) {
+	const (
+		perigeeHASL = 400e3 // m
+		apogeeHASL  = 500e3 // m
+		dt          = 300.0 // s
+		nOrbits     = 5
+		energyTol   = 2e-13
+	)
+	earth := gnco.NewEarth()
+	mu := earth.G()
+	rP := earth.Radius() + earth.HASLToElevation(perigeeHASL)
+	rA := earth.Radius() + earth.HASLToElevation(apogeeHASL)
+	a := 0.5 * (rP + rA)
+	vT := math.Sqrt(mu * (2/rP - 1/a)) // tangential velocity at periapsis
+	SBI0 := md3.Vec{X: rP}
+	VBI0 := md3.Vec{Y: vT}
+	E0 := 0.5*vT*vT - mu/rP
+	T := 2 * math.Pi * math.Sqrt(a*a*a/mu)
+
+	coords := earth.GeocentricFromEarthFixedCoords(SBI0, 0)
+	integrator := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
+
+	tt, SBI, VBI := integrator.State()
+	var maxErrE float64
+	for tt < float64(nOrbits)*T {
+		r := md3.Norm(SBI)
+		v := md3.Norm(VBI)
+		E := 0.5*v*v - mu/r
+		if errE := math.Abs((E - E0) / E0); errE > maxErrE {
+			maxErrE = errE
+		}
+		tt, SBI, VBI = integrator.Step(dt, md3.Vec{})
+	}
+	if maxErrE > energyTol {
+		t.Errorf("max |ΔE/E₀| = %.2e over %d orbits, want < %.2e", maxErrE, nOrbits, energyTol)
+	}
+}
+
 func TestCoordsHASL(t *testing.T) {
 	earth := gnco.NewEarth()
 

@@ -52,12 +52,7 @@ func (phys *PhysicsPointIntegrator) accel(yppDst []md3.Vec, tv []float64, yv []m
 	for i := range yppDst {
 		t, SBII := tv[i], yv[i]
 		TEI := w.TEI(t)
-		SBIE := md3.MulMatVec(TEI, SBII)
-		// Pass epochTime=0 so SetFromEarthFixedCoords stores atan2(SBIE) as the longitude
-		// without subtracting Rotation*t. This matches trajectory-sim's FromInertial(SBIE)
-		// and allows the TEI rotation to cancel in TGI = TGE*TEI, yielding the correct
-		// gravity direction in ECI regardless of the exact TEI rotation angle.
-		coord.SetFromEarthFixedCoords(SBIE, 0)
+		coord.SetFromEarthFixedCoords(SBII, t)
 		// Calculate TM geographic wrt earth coordinates.
 		TGE := coord.TGE()
 		// Calculate TM of geographic wrt inertial coordinates.
