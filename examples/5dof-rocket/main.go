@@ -24,7 +24,7 @@ func run() error {
 		burnTime    = 40.0     // [s]  →  mass flow = 20 kg/s
 		refArea     = 0.07     // [m²] reference cross-section (~30 cm Ø)
 		dragCoeff   = 0.35     // [-]
-
+		liftCoeff   = 0.0      // [-]
 		// Launch geometry — 85° elevation, heading North.
 		launchElevDeg = 85.0
 		launchBearing = 0.0 // [rad] bearing from North
@@ -82,9 +82,9 @@ func run() error {
 	var apogeeHASL, apogeeTime float64
 	nextPrint := 0.0
 
-	fmt.Printf("%-8s  %-11s  %-11s  %-10s  %-6s\n",
-		"t [s]", "HASL [km]", "speed [m/s]", "mass [kg]", "Mach")
-	fmt.Println("--------  -----------  -----------  ----------  ------")
+	fmt.Printf("%-8s  %-11s  %-11s  %-10s  %-6s  %-6s\n",
+		"t [s]", "HASL [km]", "speed [m/s]", "mass [kg]", "Mach", "Q [Pa]")
+	fmt.Println("--------  -----------  -----------  ----------  ------  ------")
 
 	for t < maxT {
 		hasl := coords.HASL()
@@ -101,10 +101,10 @@ func run() error {
 		}
 
 		Tatm, _, rho := gnco.InternationalStandardAtmosphere(hasl, T0sea)
-		Fdrag, _, _, mach := AeroForces(speed, rho, Tatm, dragCoeff, 0, refArea)
+		Fdrag, Flift, Q, mach := AeroForces(speed, rho, Tatm, dragCoeff, liftCoeff, refArea)
 		if t >= nextPrint {
-			fmt.Printf("%-8.1f  %-11.3f  %-11.1f  %-10.1f  %-6.2f\n",
-				t, hasl/1000, speed, mass, mach)
+			fmt.Printf("%-8.1f  %-11.3f  %-11.1f  %-10.1f  %-6.2f  %-6.0f\n",
+				t, hasl/1000, speed, mass, mach, Q)
 			nextPrint += 20.0
 		}
 
@@ -115,8 +115,9 @@ func run() error {
 
 		// Accelerations in the velocity frame.
 		// Gravity is handled internally by PhysicsPointIntegrator; do not add it here.
-		var AFpsV md3.Vec
-		AFpsV.X = -Fdrag / mass
+		// See [gnco.Orientation] and [gnco.Frame] to understand velocity frame orientation.
+		var FpsV = md3.Vec{X: -Fdrag, Z: Flift}
+		AFpsV := md3.Scale(1/mass, FpsV) // F=ma
 		if t < burnTime {
 			AFpsV.X += thrustForce / mass
 			mass = max(massDry, mass-massFlow*dt)
