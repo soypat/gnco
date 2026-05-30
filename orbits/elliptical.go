@@ -8,7 +8,7 @@ import (
 )
 
 // Orbit defines a typical earthbound circular or elliptic orbit at
-// an inclination plane. Most, if not all logic, implemented with
+// an inclination plane. Most (if not all) logic implemented with
 // Curtis, Howard's Orbital Mechanics for Mechanical Engineering Students - Third edition.
 type Elliptical struct {
 	// ra and rp [m] are the apoapsis and periapsis radius of an elliptical orbit.
@@ -53,7 +53,7 @@ func (o Elliptical) Apoapsis() float64 { return o.ra }
 //
 //	minHeight := o.Periapsis() - world.Radius
 func (o Elliptical) Periapsis() float64 {
-	if o.rp == 0 {
+	if o.isStrictlyCircular() {
 		return o.ra // Is circular orbit.
 	}
 	return o.rp
@@ -61,7 +61,12 @@ func (o Elliptical) Periapsis() float64 {
 
 // IsCircular returns true if the orbit is circular to within a given tolerance.
 func (o Elliptical) IsCircular(tol float64) bool {
-	return o.rp == 0 || o.ra-o.rp < tol
+	return o.isStrictlyCircular() || o.ra-o.rp < tol
+}
+
+// equivalent to Elliptical.IsCircular(0).
+func (o Elliptical) isStrictlyCircular() bool {
+	return o.rp == 0
 }
 
 // Eccentricity returns parameter of eccentricity of orbit. More elliptical orbits have higher eccentricity.
@@ -71,14 +76,18 @@ func (o Elliptical) Eccentricity() float64 {
 	return c / a
 }
 
+// Ellipse returns the semi-major axis a, semi-minor axis b, and the
+// center-to-focus distance c of the orbital ellipse, all in meters.
+func (o Elliptical) Ellipse() (a, b, c float64) {
+	a = o.a()
+	c = o.c()
+	e := c / a // Direct eccentricity calculation.
+	b = a * math.Sqrt(1-e*e)
+	return a, b, c
+}
+
 // Ellipse semimajor axis length [m]. a=(Ra + Rp)/2
 func (o Elliptical) a() float64 { return 0.5 * (o.Apoapsis() + o.Periapsis()) }
-
-// Ellipse semiminor axis length [m]. b=a*sqrt(1-e^2)
-func (o Elliptical) b() float64 {
-	e := o.c() / o.a() // Direct eccentricity calculation.
-	return o.a() * math.Sqrt(1-e*e)
-}
 
 // Ellipse distance between focus and center [m].
 // WARNING: Some bibliogaphies define this as distance between focii, so double this c.
@@ -88,10 +97,11 @@ func (o Elliptical) c() float64 { return o.a() - o.Periapsis() }
 // true anomaly position with the coordinates centered on the ellipse center
 // and the x axis aligned with the semimajor pointing towards earth (periapsis).
 func (o Elliptical) CartesianCoordinates(trueAnomaly float64) (x, y float64) {
-	e := o.Eccentricity()
+	a, b, c := o.Ellipse()
+	e := c / a
 	sint, cost := math.Sincos(trueAnomaly)
-	x = o.a() * (e + cost) / (1 + e*cost)              // Eqn (2.77)
-	y = o.b() * sint * math.Sqrt(1-e*e) / (1 + e*cost) // Eqn (2.78)
+	x = a * (e + cost) / (1 + e*cost)              // Eqn (2.77)
+	y = b * sint * math.Sqrt(1-e*e) / (1 + e*cost) // Eqn (2.78)
 	return x, y
 }
 
@@ -111,7 +121,7 @@ func (o Elliptical) FlightPathAngle(trueAnomaly float64) float64 {
 // For circular orbits the mean anomaly matches the true anomaly.
 // MeanAnomaly shall return a value in range [0, 2pi).
 func (o Elliptical) MeanAnomaly(trueAnomaly float64) float64 {
-	if o.IsCircular(0) {
+	if o.isStrictlyCircular() {
 		return trueAnomaly
 	}
 	e := o.Eccentricity()
@@ -123,7 +133,7 @@ func (o Elliptical) MeanAnomaly(trueAnomaly float64) float64 {
 // EccentricAnomaly returns the eccentric anomaly angular parameter that defines an orbit.
 // Usually stylized as upper case E in literature.
 func (o Elliptical) EccentricAnomaly(trueAnomaly float64) float64 {
-	if o.IsCircular(0) {
+	if o.isStrictlyCircular() {
 		return trueAnomaly
 	}
 	const iter = 30 // TODO(soypat): How many iterations is enough? Depends on eccentricity I think.
@@ -157,10 +167,9 @@ func (o Elliptical) SpecificEnergy(gravParam float64) float64 {
 
 // Period returns the period of the orbit, or the amount of time it takes to complete a single orbit around world. [s]
 func (o Elliptical) Period(gravParam float64) float64 {
-	if o.IsCircular(0) {
+	if o.isStrictlyCircular() {
 		return 2 * math.Pi * o.ra / math.Hypot(o.Velocity(gravParam, 0))
 	}
-	// Not validated!
 	a := o.a()
 	return 2 * math.Pi * math.Sqrt(a*a*a/gravParam) // Eqn (2.83)
 }
