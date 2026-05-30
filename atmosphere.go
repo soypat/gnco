@@ -13,7 +13,7 @@ import (
 // sea level temperature in kelvin.
 func InternationalStandardAtmosphere(zAltitude float64, T0seaLevel float64) (T, P, Rho float64) {
 	const (
-		g                = 9.79 
+		g                = 9.79
 		R                = 8.314472
 		M                = 28.97e-3
 		hydrogenAtomMass = 1.6735575e-27

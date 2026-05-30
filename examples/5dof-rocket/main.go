@@ -101,9 +101,7 @@ func run() error {
 		}
 
 		Tatm, _, rho := gnco.InternationalStandardAtmosphere(hasl, T0sea)
-		q := 0.5 * rho * speed * speed
-		mach := speed / math.Sqrt(1.4*287.053*Tatm)
-
+		Fdrag, _, _, mach := AeroForces(speed, rho, Tatm, dragCoeff, 0, refArea)
 		if t >= nextPrint {
 			fmt.Printf("%-8.1f  %-11.3f  %-11.1f  %-10.1f  %-6.2f\n",
 				t, hasl/1000, speed, mass, mach)
@@ -118,7 +116,7 @@ func run() error {
 		// Accelerations in the velocity frame.
 		// Gravity is handled internally by PhysicsPointIntegrator; do not add it here.
 		var AFpsV md3.Vec
-		AFpsV.X = -dragCoeff * q * refArea / mass
+		AFpsV.X = -Fdrag / mass
 		if t < burnTime {
 			AFpsV.X += thrustForce / mass
 			mass = max(massDry, mass-massFlow*dt)
@@ -140,4 +138,26 @@ func run() error {
 	fmt.Println()
 	fmt.Printf("Apogee: %.1f km  at t = %.0f s\n", apogeeHASL/1000, apogeeTime)
 	return nil
+}
+
+// AeroForces computes aerodynamic drag and lift forces, dynamic pressure, and
+// Mach number for a body moving at vel [m/s] through air of density rho [kg/m³]
+// and temperature T [K], given drag coefficient Cd, lift coefficient Cl, and
+// reference area Aref [m²].
+//
+//	Q     = ½·ρ·v²
+//	Mach  = v / sqrt(γ·R/M·T)
+//	Fdrag = Cd · Q · Aref
+//	Flift = Cl · Q · Aref
+func AeroForces(vel, rho, T, Cd, Cl, Aref float64) (Fdrag, Flift, Q, Mach float64) {
+	const (
+		gamma  = 1.4      // specific heat ratio for air
+		airMol = 28.97e-3 // molar mass of air [kg/mol]
+		Ru     = 8.314472 // universal gas constant [J/(mol·K)]
+	)
+	Q = 0.5 * rho * vel * vel
+	Mach = vel / math.Sqrt(gamma*Ru/airMol*T)
+	Fdrag = Cd * Q * Aref
+	Flift = Cl * Q * Aref
+	return
 }
