@@ -7,9 +7,13 @@ import (
 	"github.com/soypat/geometry/md1"
 )
 
+// InternationalStandardAtmosphere returns temperature, pressure and density
+// for a given altitude using the International Standard Atmosphere model.
+// zAltitude is the height above sea level in meters and T0seaLevel is the
+// sea level temperature in kelvin.
 func InternationalStandardAtmosphere(zAltitude float64, T0seaLevel float64) (T, P, Rho float64) {
 	const (
-		g                = 9.79
+		g                = 9.79 
 		R                = 8.314472
 		M                = 28.97e-3
 		hydrogenAtomMass = 1.6735575e-27

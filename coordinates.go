@@ -6,13 +6,20 @@ import (
 	"github.com/soypat/geometry/md3"
 )
 
+// Coordinates represents location-related operations in geographic and
+// World-fixed reference frames.
 type Coordinates interface {
+	// AGravG returns gravity acceleration in geographic coordinates.
 	AGravG() md3.Vec
+	// TGE returns the transform from geographic to World-fixed frame.
 	TGE() md3.Mat3
+	// SetFromEarthFixedCoords updates coordinates from an World-fixed vector.
 	SetFromEarthFixedCoords(SBIE md3.Vec, epochTime float64)
+	// World returns the associated world model.
 	World() *World
 }
 
+// Compile-time guarantee of interface implementation.
 var (
 	_ Coordinates = (*GeocentricCoords)(nil)
 	_ Coordinates = (*GeodesicCoords)(nil)
@@ -41,11 +48,13 @@ type GeodesicCoords struct {
 	c GeocentricCoords
 }
 
+// Geodesic returns the equivalent [GeodesicCoords] representation.
 func (g GeocentricCoords) Geodesic() GeodesicCoords {
 	return GeodesicCoords{c: g}
 }
 
-func (g GeocentricCoords) Degrees() (longitude float64, latitude float64) {
+// Degrees returns the longitude and latitude in degrees.
+func (g GeocentricCoords) Degrees() (longitude, latitude float64) {
 	return g.Long * 180 / math.Pi, g.Lat * 180 / math.Pi
 }
 
@@ -70,6 +79,7 @@ func (g GeocentricCoords) EarthFixedCoords(epochTime float64) (sBIE md3.Vec) {
 	return md3.Scale(radius, sBIE)
 }
 
+// SetFromEarthFixedCoords updates coordinates from an World-fixed vector. Implements [Coordinates].
 func (g *GeocentricCoords) SetFromEarthFixedCoords(sBIE md3.Vec, epochTime float64) {
 	if g.w == nil {
 		panic("nil world")
@@ -77,8 +87,13 @@ func (g *GeocentricCoords) SetFromEarthFixedCoords(sBIE md3.Vec, epochTime float
 	*g = g.w.GeocentricFromEarthFixedCoords(sBIE, epochTime)
 }
 
+// World returns the reference [World] model used by these coordinates.
 func (g GeocentricCoords) World() *World { return g.w }
 
+// TGI returns the transform matrix from geographic coordinates to the
+// planet-centered inertial frame at the given epoch time.
+//
+//	TGI = TGE*TEI
 func (g GeocentricCoords) TGI(epochTime float64) md3.Mat3 {
 	TEI := g.w.TEI(epochTime)
 	TGE := g.TGE()
@@ -86,6 +101,8 @@ func (g GeocentricCoords) TGI(epochTime float64) md3.Mat3 {
 	return TGI
 }
 
+// TGE returns the transform matrix from geographic coordinates to the
+// planet-fixed Earth-centered frame for the current geocentric coordinates.
 func (g GeocentricCoords) TGE() md3.Mat3 {
 	slo, clo := math.Sincos(g.Long)
 	sla, cla := math.Sincos(g.Lat)
@@ -96,6 +113,7 @@ func (g GeocentricCoords) TGE() md3.Mat3 {
 	)
 }
 
+// Radius returns the distance from World center to geocentric coordinate [m].
 func (g GeocentricCoords) Radius() float64 {
 	return g.w.radius + g.Elev
 }
@@ -112,6 +130,9 @@ func (g GeocentricCoords) AGravG() (gravityVec md3.Vec) {
 	return gravityVec
 }
 
+// AGravG returns gravity acceleration in geographic coordinates for a geodesic point.
+// The vector is expressed in the geographic frame and accounts for ellipsoidal gravity
+// variations using the current world model.
 func (g GeodesicCoords) AGravG() (gravityVec md3.Vec) {
 	// Sqrt(0.5)
 	const sqrtHalf = 0.7071067811865475244008443621048490392848359376884740365883398689
@@ -127,17 +148,21 @@ func (g GeodesicCoords) AGravG() (gravityVec md3.Vec) {
 	return gravityVec
 }
 
+// SetFromEarthFixedCoords updates coordinates from an World-fixed vector. Implements [Coordinates].
 func (g *GeodesicCoords) SetFromEarthFixedCoords(sBIE md3.Vec, epochTime float64) {
 	g.c.SetFromEarthFixedCoords(sBIE, epochTime)
 }
 
+// World returns the reference [World] model used by these coordinates.
 func (g GeodesicCoords) World() *World { return g.c.w }
 
 // HASL returns height above sea level [m].
 func (g GeodesicCoords) HASL() float64 { return g.c.HASL() }
 
+// Geocentric returns the equivalent [GeocentricCoords] representation.
 func (g GeodesicCoords) Geocentric() GeocentricCoords { return g.c }
 
+// TGE returns the geographic-to-earth-fixed transform matrix.
 func (g GeodesicCoords) TGE() md3.Mat3 { return g.c.TGE() }
 
 // clampLongLat limits the value of rad to within range [-pi,pi] such that

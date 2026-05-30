@@ -1,6 +1,7 @@
 package ode
 
 import (
+	"errors"
 	"math"
 
 	"github.com/soypat/geometry/md3"
@@ -46,22 +47,21 @@ type RKN1210 struct {
 	fx                     func(yppDst []md3.Vec, tv []float64, yv []md3.Vec)
 }
 
-func NewRKN1210(relax, preConditioner float64, cfg Parameters) *RKN1210 {
+func (rk *RKN1210) Configure(relax, preConditioner float64, cfg Parameters) error {
 	if (cfg.AbsTolerance != 0 && cfg.MaxStep <= 0) || cfg.MaxStep < cfg.MinStep ||
 		cfg.MinStep < 0 {
-		panic("invalid parameters supplied")
+		return errors.New("invalid parameters supplied")
 	} else if relax <= 0 || relax >= 1 {
-		panic("bad relax factor")
+		return errors.New("bad relax factor")
 	} else if preConditioner <= 1 || preConditioner > 11 {
-		panic("bad preconditioner")
+		return errors.New("bad preconditioner")
 	}
-	return &RKN1210{
-		atol:    cfg.AbsTolerance,
-		minStep: cfg.MinStep,
-		maxStep: cfg.MaxStep,
-		relax:   relax,
-		precond: preConditioner,
-	}
+	rk.atol = cfg.AbsTolerance
+	rk.minStep = cfg.MinStep
+	rk.maxStep = cfg.MaxStep
+	rk.relax = relax
+	rk.precond = preConditioner
+	return nil
 }
 
 func (rk *RKN1210) Init(ivp IVP2) {

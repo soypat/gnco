@@ -6,22 +6,27 @@ import (
 	"github.com/soypat/geometry/md3"
 )
 
+// Frame identifies a coordinate frame used for orientation conversions.
 type Frame rune
 
 const (
-	FrameInertial   Frame = 'I'
-	FrameGeographic Frame = 'G'
-	FrameVelocity   Frame = 'V'
-	FrameBody       Frame = 'B'
+	FrameInertial   Frame = 'I' // inertial
+	FrameGeographic Frame = 'G' // geographic
+	FrameVelocity   Frame = 'V' // velocity
+	FrameBody       Frame = 'B' // body
 )
 
+// Orientation holds the DCMs that chain body → velocity → geographic → inertial.
+// Each matrix T_XY satisfies T_XY * v_Y = v_X (subscript convention: destination
+// first, source second), so MulMatVec converts source→destination and MulMatVecTrans
+// converts destination→source. Full inertial-to-body chain: TBV * TVG * TGI.
 type Orientation struct {
-	TBV md3.Mat3 // Rotation tensor: body to velocity coordinates.
-	TVG md3.Mat3 // Rotation tensor: velocity to geographical coordinates.
-	TGI md3.Mat3 // Rotation tensor: geographical to inertial coordinates.
+	TBV md3.Mat3 // velocity → body (v_B = TBV * v_V).
+	TVG md3.Mat3 // geographic → velocity (v_V = TVG * v_G).
+	TGI md3.Mat3 // inertial → geographic (v_G = TGI * v_I).
 }
 
-// ToInertial converts frameVec in the given F frame to inertial frame of reference.
+// ToInertial converts frameVec from frame F into inertial frame of reference.
 func (F Frame) ToInertial(dir Orientation, frameVec md3.Vec) md3.Vec {
 	switch F {
 	case FrameBody:
@@ -40,7 +45,7 @@ func (F Frame) ToInertial(dir Orientation, frameVec md3.Vec) md3.Vec {
 	return frameVec
 }
 
-// ToGeographic converts frameVec in the given F frame to geographic frame of reference.
+// ToGeographic converts frameVec from frame F into geographic frame of reference.
 func (F Frame) ToGeographic(v Orientation, frameVec md3.Vec) md3.Vec {
 	switch F {
 	case FrameBody:
@@ -58,7 +63,7 @@ func (F Frame) ToGeographic(v Orientation, frameVec md3.Vec) md3.Vec {
 	return frameVec
 }
 
-// ToVelocity converts frameVec in the given F frame to velocity frame of reference.
+// ToVelocity converts frameVec from frame F into velocity frame of reference.
 func (F Frame) ToVelocity(v Orientation, frameVec md3.Vec) md3.Vec {
 	switch F {
 	case FrameBody:
@@ -76,12 +81,31 @@ func (F Frame) ToVelocity(v Orientation, frameVec md3.Vec) md3.Vec {
 	return frameVec
 }
 
-// TVGFromGeographicVelocity returns the transformation matrix from geographic (G)
-// to velocity (V) frame given vbg, the vehicle velocity in geographic coordinates.
-// TVG satisfies TVG * v_G = v_V; its transpose converts the opposite direction (V→G).
+// ToBody converts frameVec from frame F to body frame of reference.
+func (F Frame) ToBody(v Orientation, frameVec md3.Vec) md3.Vec {
+	switch F {
+	case FrameInertial:
+		frameVec = md3.MulMatVec(v.TGI, frameVec)
+		fallthrough
+	case FrameGeographic:
+		frameVec = md3.MulMatVec(v.TVG, frameVec)
+		fallthrough
+	case FrameVelocity:
+		frameVec = md3.MulMatVec(v.TBV, frameVec)
+	case FrameBody:
+		// No conversion needed.
+	default:
+		panic("unknown frame")
+	}
+	return frameVec
+}
+
+// TVGFromGeographicVelocity returns the geographic-to-velocity transform matrix.
+// vbg is the vehicle velocity in geographic coordinates.
 //
-// The V-frame X-axis is aligned with the velocity direction. For near-vertical flight
-// (horizontal component < 1e-9 of total speed) azimuth defaults to zero (North).
+//	TVG * v_G = v_V; transpose(TVG) converts V to G.
+//
+// The V-frame x-axis aligns with velocity. Near-vertical motion uses north as azimuth.
 func TVGFromGeographicVelocity(vbg md3.Vec) md3.Mat3 {
 	vnorm := md3.Norm(vbg)
 	if vnorm == 0 {
@@ -109,23 +133,4 @@ func TVGFromGeographicVelocity(vbg md3.Vec) md3.Mat3 {
 		-vy/hspeed, vx/hspeed, 0,
 		-vz*vx/hspeed, -vz*vy/hspeed, hspeed,
 	)
-}
-
-// ToBody converts frameVec in the given F frame to body frame of reference.
-func (F Frame) ToBody(v Orientation, frameVec md3.Vec) md3.Vec {
-	switch F {
-	case FrameInertial:
-		frameVec = md3.MulMatVec(v.TGI, frameVec)
-		fallthrough
-	case FrameGeographic:
-		frameVec = md3.MulMatVec(v.TVG, frameVec)
-		fallthrough
-	case FrameVelocity:
-		frameVec = md3.MulMatVec(v.TBV, frameVec)
-	case FrameBody:
-		// No conversion needed.
-	default:
-		panic("unknown frame")
-	}
-	return frameVec
 }

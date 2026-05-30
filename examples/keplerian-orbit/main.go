@@ -1,9 +1,8 @@
 // Package main demonstrates RKN12(10) energy conservation for a Keplerian
 // elliptical orbit using large integration steps.
 //
-// A satellite is placed in a highly elliptical orbit (e ≈ 0.59, perigee 400 km,
-// apogee 20 000 km) and integrated for five full orbits with a fixed step of 300 s
-// — about five minutes per step (~71 steps per orbit).  The specific orbital energy
+// A satellite is placed in a elliptical orbit and integrated with a fixed step of 300s,
+// about five minutes per step (~19 steps per orbit).  The specific orbital energy
 //
 //	E = v²/2 − μ/r
 //
@@ -82,7 +81,8 @@ func run() error {
 				t/3600, r/1e3, v, errE)
 			nextPrint += T / 4 // four samples per orbit
 		}
-
+		// Zero external forces other than gravity.
+		// Gravity is calculated within Step from the gnco.Coordinates system provided.
 		t, SBI, VBI = integrator.Step(dt, md3.Vec{})
 		totalSteps++
 	}
