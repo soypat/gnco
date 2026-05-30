@@ -1,4 +1,4 @@
-package nozzle
+package nozzles
 
 import (
 	"errors"
@@ -13,6 +13,35 @@ const (
 	// Standard gravity [m/s^2]
 	_g0 = 9.80665
 )
+
+// LOXKeroseneExhaust returns equilibrium exhaust properties for a low mixture-ratio LOX/RP-1
+// engine at O/F=2.24 and pc=1000psia, pe=14.7psia, optimal expansion.
+//
+// Reference: https://engdatabase.com/data/rocket-propellant-properties/loxrp1lowermr
+func DefaultLOXKeroseneExhaust() ExhaustIsoentropic {
+	return ExhaustIsoentropic{
+		MolarMass:          21.9e-3, // [kg/mol]
+		Gamma:              1.24,
+		MaxBurnTemperature: 3571, // [K]
+	}
+}
+
+// ExhaustIsoentropic describes the thermodynamic properties of combustion exhaust.
+type ExhaustIsoentropic struct {
+	// Molar mass of exhaust gas [kg/mol]
+	MolarMass float64
+	// Specific heat ratio cp/cv
+	Gamma float64
+	// Stagnation (chamber) temperature [K]
+	MaxBurnTemperature float64
+}
+
+// SpeedOfSound returns the isentropic speed of sound [m/s] at temperature T.
+//
+//	a = sqrt(γ·R·T),  R = Ru/M
+func (ex ExhaustIsoentropic) SpeedOfSound(T float64) float64 {
+	return math.Sqrt(ex.Gamma * _Ru / ex.MolarMass * T)
+}
 
 // Laval defines a Laval (convergent-divergent) nozzle.
 // All methods are for isoentropic processes unless specified otherwise in method name.
@@ -129,21 +158,4 @@ func (laval Laval) ExitMach(gamma float64) (float64, error) {
 		M += lamb * M * B * (math.Pow(M, 2/B) - M2*B*k2*u2 + math.Sqrt(rt))
 	}
 	return M, nil
-}
-
-// ExhaustIsoentropic describes the thermodynamic properties of combustion exhaust.
-type ExhaustIsoentropic struct {
-	// Molar mass of exhaust gas [kg/mol]
-	MolarMass float64
-	// Specific heat ratio cp/cv
-	Gamma float64
-	// Stagnation (chamber) temperature [K]
-	MaxBurnTemperature float64
-}
-
-// SpeedOfSound returns the isentropic speed of sound [m/s] at temperature T.
-//
-//	a = sqrt(γ·R·T),  R = Ru/M
-func (ex ExhaustIsoentropic) SpeedOfSound(T float64) float64 {
-	return math.Sqrt(ex.Gamma * _Ru / ex.MolarMass * T)
 }
