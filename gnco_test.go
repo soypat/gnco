@@ -92,7 +92,7 @@ func TestTVGFromGeographicVelocity(t *testing.T) {
 		vbg := gnco.GeographicVectorFromElevationAndBearing(0.3, 1.1, 1)
 		tvg1 := gnco.TVGFromGeographicVelocity(vbg)
 		tvg2 := gnco.TVGFromGeographicVelocity(md3.Scale(1000, vbg))
-		for n := 0; n < 3; n++ {
+		for n := range 3 {
 			diff := md3.Sub(tvgRow(tvg1, n), tvgRow(tvg2, n))
 			if !md1.EqualWithinAbs(md3.Norm(diff), 0, tol) {
 				t.Errorf("row%d differs under scaling: %v vs %v", n, tvgRow(tvg1, n), tvgRow(tvg2, n))
@@ -331,4 +331,98 @@ func BenchmarkPhysicsPointIntegrator(b *testing.B) {
 		}
 		b.ReportMetric(maxErrE, "|ΔE/E₀|")
 	})
+}
+
+// TestPhysicsPointIntegrator verifies that both Step (RKN12(10)) and StepFast (DP45)
+// track Keplerian orbits accurately over one full orbital period.
+// Initial conditions are placed at periapsis on the ECI +X axis; after one period
+// the spacecraft must return to its starting position.
+func TestPhysicsPointIntegrator(t *testing.T) {
+	const (
+		dt              = 30.0  // [s] fixed step size for both integrators
+		trueAnomalyTol  = 1e-8  // [rad] Newton-Raphson convergence for TrueAnomalyFrom…
+		posToleranceRKN = 1e-3  // [m]  RKN12(10): ~machine-precision level at h=30 s
+		posToleranceDPA = 1.0   // [m]  DP45 non-adaptive: ~mm range at h=30 s
+		velToleranceRKN = 1e-7  // [m/s]
+		velToleranceDPA = 1e-4  // [m/s]
+	)
+	world := gnco.NewEarth()
+	gravParam := world.G()
+	rEarth := world.Radius()
+
+	orbCases := []struct {
+		name   string
+		ra, rp float64
+	}{
+		{"elliptical 300-500 km", rEarth + 500e3, rEarth + 300e3},
+		{"circular 400 km", rEarth + 400e3, rEarth + 400e3},
+	}
+
+	for _, oc := range orbCases {
+		t.Run(oc.name, func(t *testing.T) {
+			orbit, err := orbits.NewElliptical(oc.ra, oc.rp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			T := orbit.Period(gravParam) // one full orbital period [s]
+
+			// Place spacecraft at periapsis on ECI +X axis.
+			rP := orbit.Periapsis()
+			_, vT0 := orbit.Velocity(gravParam, 0) // vR=0 at periapsis
+			SBI0 := md3.Vec{X: rP}
+			VBI0 := md3.Vec{Y: vT0}
+
+			for _, ic := range []struct {
+				name   string
+				stepFn func(*gnco.PhysicsPointIntegrator, float64) (float64, md3.Vec, md3.Vec)
+				posTol float64
+				velTol float64
+			}{
+				{
+					name:   "Step",
+					stepFn: func(ig *gnco.PhysicsPointIntegrator, h float64) (float64, md3.Vec, md3.Vec) { return ig.Step(h, md3.Vec{}) },
+					posTol: posToleranceRKN,
+					velTol: velToleranceRKN,
+				},
+				{
+					name:   "StepFast",
+					stepFn: func(ig *gnco.PhysicsPointIntegrator, h float64) (float64, md3.Vec, md3.Vec) { return ig.StepFast(h, md3.Vec{}) },
+					posTol: posToleranceDPA,
+					velTol: velToleranceDPA,
+				},
+			} {
+				t.Run(ic.name, func(t *testing.T) {
+					coords := world.GeocentricFromEarthFixedCoords(SBI0, 0)
+					ig := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
+					var tNow float64
+					SBI, VBI := SBI0, VBI0
+					for tNow < T {
+						tNow, SBI, VBI = ic.stepFn(ig, min(dt, T-tNow))
+					}
+					// Analytical position/velocity at tNow using Kepler's equation.
+					ta := orbit.TrueAnomalyFromElapsedSincePeriapsis(gravParam, tNow, trueAnomalyTol)
+					if math.IsNaN(ta) {
+						t.Fatal("TrueAnomalyFromElapsedSincePeriapsis returned NaN")
+					}
+					r := orbit.DistanceToCenter(gravParam, ta)
+					// ECI perifocal frame: periapsis on +X, orbit in XY plane.
+					wantPos := md3.Vec{X: r * math.Cos(ta), Y: r * math.Sin(ta)}
+					vR, vTa := orbit.Velocity(gravParam, ta)
+					wantVel := md3.Vec{
+						X: vR*math.Cos(ta) - vTa*math.Sin(ta),
+						Y: vR*math.Sin(ta) + vTa*math.Cos(ta),
+					}
+					posErr := md3.Norm(md3.Sub(SBI, wantPos))
+					velErr := md3.Norm(md3.Sub(VBI, wantVel))
+					t.Logf("posErr=%.3e m  velErr=%.3e m/s  tNow=%.1f s  T=%.1f s", posErr, velErr, tNow, T)
+					if posErr > ic.posTol {
+						t.Errorf("position error %.3e m exceeds tolerance %.3e m", posErr, ic.posTol)
+					}
+					if velErr > ic.velTol {
+						t.Errorf("velocity error %.3e m/s exceeds tolerance %.3e m/s", velErr, ic.velTol)
+					}
+				})
+			}
+		})
+	}
 }
