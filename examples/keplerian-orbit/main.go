@@ -11,6 +11,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -26,7 +27,14 @@ func main() {
 	}
 }
 
+type Flags struct {
+	UseRK45 bool
+}
+
 func run() error {
+	var flags Flags
+	flag.BoolVar(&flags.UseRK45, "rk45", false, "Use faster but more error prone RK45 integrator.")
+	flag.Parse()
 	const (
 		perigeeHASL = 400e3 // [m] 400 km: ISS-like altitude
 		apogeeHASL  = 500e3 // [m] 500 km: slightly elliptical
@@ -60,36 +68,43 @@ func run() error {
 	fmt.Printf("  Period T = %.0f s (%.2f h)   dt = %.0f s   %.1f steps/orbit\n\n",
 		T, T/3600, dt, T/dt)
 
-	fmt.Printf("%-8s  %-12s  %-12s  %-12s\n", "t [h]", "radius [km]", "speed [m/s]", "|ΔE/E₀|")
-	fmt.Println("--------  ------------  ------------  ------------")
+	fmt.Printf("%-8s  %-12s  %-12s  %-12s  %-12s\n", "t [h]", "radius [km]", "speed [m/s]", "rk45 |ΔE/E₀|", "rk1210 |ΔE/E₀|")
+	fmt.Println("--------  ------------  ------------  ------------  -----------")
 	integrator := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
+	integratorFast := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
 	t, SBI, VBI := integrator.State()
+	SBIfast, VBIfast := SBI, VBI // copy for fast integration comparison.
+	tfast := t
 	nextPrint := 0.0
 	totalSteps := 0
 	var maxErrE float64
 	for t < float64(nOrbits)*T {
-		r := md3.Norm(SBI)
-		v := md3.Norm(VBI)
+		r, v := md3.Norm(SBI), md3.Norm(VBI)
+		rfast, vfast := md3.Norm(SBIfast), md3.Norm(VBIfast)
+		Efast := 0.5*vfast*vfast - mu/rfast
 		E := 0.5*v*v - mu/r
+
 		errE := math.Abs((E - E0) / E0)
+		errEfast := math.Abs((Efast - E0) / E0)
 		if errE > maxErrE {
 			maxErrE = errE
 		}
 
 		if t >= nextPrint {
-			fmt.Printf("%-8.3f  %-12.1f  %-12.1f  %-12.2e\n",
-				t/3600, r/1e3, v, errE)
+			fmt.Printf("%-8.3f  %-12.1f  %-12.1f  %-13.2e %-12.2e\n",
+				t/3600, r/1e3, v, errEfast, errE)
 			nextPrint += T / 4 // four samples per orbit
 		}
 		// Zero external forces other than gravity.
 		// Gravity is calculated within Step from the gnco.Coordinates system provided.
 		t, SBI, VBI = integrator.Step(dt, md3.Vec{})
+		tfast, SBIfast, VBIfast = integratorFast.StepFast(dt, md3.Vec{})
 		totalSteps++
 	}
 
 	fmt.Println()
-	fmt.Printf("Completed %.0f orbits in %d steps (dt = %.0f s).\n",
-		float64(nOrbits), totalSteps, dt)
+	fmt.Printf("Completed %.0f orbits in %d steps (dt = %.0f s). t=%.3fh tfast=%.3fh\n",
+		float64(nOrbits), totalSteps, dt, t/3600, tfast/3600)
 	fmt.Printf("Maximum specific energy error |ΔE/E₀|: %.2e\n", maxErrE)
 	return nil
 }

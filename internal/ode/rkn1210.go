@@ -16,8 +16,19 @@ const (
 type Parameters struct {
 	// Permissible tolerance given an adaptive method
 	AbsTolerance float64
+	RelTolerance float64
 	// Minimum/Maximum step allowed for a single iteration
 	MinStep, MaxStep float64
+}
+
+func (cfg Parameters) Validate() error {
+	if (cfg.AbsTolerance != 0 && cfg.MaxStep <= 0) ||
+		cfg.MaxStep < cfg.MinStep ||
+		cfg.MinStep < 0 ||
+		(cfg.RelTolerance != 0 && cfg.MaxStep <= 0) {
+		return errors.New("invalid ODE parameters supplied")
+	}
+	return nil
 }
 
 type IVP2 struct {
@@ -48,9 +59,8 @@ type RKN1210 struct {
 }
 
 func (rk *RKN1210) Configure(relax, preConditioner float64, cfg Parameters) error {
-	if (cfg.AbsTolerance != 0 && cfg.MaxStep <= 0) || cfg.MaxStep < cfg.MinStep ||
-		cfg.MinStep < 0 {
-		return errors.New("invalid parameters supplied")
+	if err := cfg.Validate(); err != nil {
+		return err
 	} else if relax <= 0 || relax >= 1 {
 		return errors.New("bad relax factor")
 	} else if preConditioner <= 1 || preConditioner > 11 {
