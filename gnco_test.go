@@ -7,6 +7,7 @@ import (
 	"github.com/soypat/geometry/md1"
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/orbits"
 )
 
 // tvgRow extracts row n of a TVG matrix via its transpose action on a basis vector.
@@ -65,7 +66,7 @@ func TestTVGFromGeographicVelocity(t *testing.T) {
 		{"45deg up north", math.Pi / 4, 0},
 		{"45deg up east", math.Pi / 4, math.Pi / 2},
 		{"30deg up southwest", math.Pi / 6, 5 * math.Pi / 4},
-		{"straight up", math.Pi / 2, 0},   // vertical flight, special case
+		{"straight up", math.Pi / 2, 0},    // vertical flight, special case
 		{"straight down", -math.Pi / 2, 0}, // vertical flight, special case
 	}
 
@@ -229,18 +230,22 @@ func TestPhysicsKeplerianEnergy(t *testing.T) {
 		apogeeHASL  = 500e3 // m
 		dt          = 300.0 // s
 		nOrbits     = 5
-		energyTol   = 2e-13
+		energyTol   = 1.5e-14
 	)
 	earth := gnco.NewEarth()
 	mu := earth.G()
 	rP := earth.Radius() + earth.HASLToElevation(perigeeHASL)
 	rA := earth.Radius() + earth.HASLToElevation(apogeeHASL)
-	a := 0.5 * (rP + rA)
-	vT := math.Sqrt(mu * (2/rP - 1/a)) // tangential velocity at periapsis
+	orbit, err := orbits.NewElliptical(rA, rP)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, vT := orbit.Velocity(mu, 0) // vRadial=0 at periapsis; vT is tangential velocity
 	SBI0 := md3.Vec{X: rP}
 	VBI0 := md3.Vec{Y: vT}
-	E0 := 0.5*vT*vT - mu/rP
-	T := 2 * math.Pi * math.Sqrt(a*a*a/mu)
+	E0 := orbit.SpecificEnergy(mu)
+	T := orbit.Period(mu)
 
 	coords := earth.GeocentricFromEarthFixedCoords(SBI0, 0)
 	integrator := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)

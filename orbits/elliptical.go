@@ -158,7 +158,7 @@ func (o Elliptical) EccentricAnomaly(trueAnomaly float64) float64 {
 func (o Elliptical) AngularMomentum(gravParam float64) float64 {
 	// We evaluate the orbit equation at perigee where trueAnomaly==0
 	// and solve for h.l
-	return math.Sqrt(gravParam * o.rp * (1 + o.Eccentricity()))
+	return math.Sqrt(gravParam * o.Periapsis() * (1 + o.Eccentricity()))
 }
 
 func (o Elliptical) SpecificEnergy(gravParam float64) float64 {
@@ -168,7 +168,7 @@ func (o Elliptical) SpecificEnergy(gravParam float64) float64 {
 // Period returns the period of the orbit, or the amount of time it takes to complete a single orbit around world. [s]
 func (o Elliptical) Period(gravParam float64) float64 {
 	if o.isStrictlyCircular() {
-		return 2 * math.Pi * o.ra / math.Hypot(o.Velocity(gravParam, 0))
+		return 2 * math.Pi * o.Apoapsis() / math.Hypot(o.Velocity(gravParam, 0))
 	}
 	a := o.a()
 	return 2 * math.Pi * math.Sqrt(a*a*a/gravParam) // Eqn (2.83)
