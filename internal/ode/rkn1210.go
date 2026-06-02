@@ -102,6 +102,7 @@ func (rk *RKN1210) reset() {
 
 func (rk *RKN1210) Step(h float64) (float64, error) {
 	adaptive := rk.atol > 0
+	var hadapt float64
 	var aux md3.Vec
 	y := rk.y
 	dy := rk.dy
@@ -149,18 +150,14 @@ SOLVE:
 		// In taking the Max we use worst case error.
 		errMax = math.Max(errMax, math.Abs(aux.X)+math.Abs(aux.Y)+math.Abs(aux.Z)) // error ~ h*| y_l- y_h |
 		errRatio := rk.atol / (errMax * h * preCond)
-		hnew := relax * math.Pow(errRatio, 1./preCond)
-		hnew = math.Min(math.Max(hnew, rk.minStep), rk.maxStep)
+		hadapt = relax * math.Pow(errRatio, 1./preCond)
+		hadapt = math.Min(math.Max(hadapt, rk.minStep), rk.maxStep)
 		if errMax > rk.atol && h > rk.minStep {
 			// Error is not permissible and we may redo the step.
-			h = hnew
+			h = hadapt
 			goto SOLVE
 		}
-		// The error is within tolerance and we may suggest the user use a larger step.
-		// Modify return value to suggest new step.
-		defer func() { h = hnew }()
 	}
-
 	// calculate next step solutions with high order B's:
 	//  y[i+1] = y[i] + h*(dy[i] + hFbhat)
 	//  dy[i+1] = dy[i] + hFDbhat
@@ -168,6 +165,11 @@ SOLVE:
 	rk.y = md3.Add(rk.y, md3.Scale(h, aux))
 	rk.dy = md3.Add(rk.dy, rk.hFDbhat)
 	rk.dom += h
+	if adaptive {
+		// The error is within tolerance and we may suggest the user use a larger step.
+		// Modify return value to suggest new step.
+		h = hadapt
+	}
 	return h, nil
 }
 

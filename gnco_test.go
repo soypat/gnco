@@ -283,3 +283,52 @@ func TestCoordsHASL(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkPhysicsPointIntegrator(b *testing.B) {
+	const (
+		perigeeHASL = 500e3
+		apogeeHASL  = 1000e3
+		dt          = 100.0
+	)
+	earth := gnco.NewEarth()
+	mu := earth.G()
+	rP := earth.Radius() + earth.HASLToElevation(perigeeHASL)
+	rA := earth.Radius() + earth.HASLToElevation(apogeeHASL)
+	orbit, err := orbits.NewElliptical(rA, rP)
+	if err != nil {
+		b.Fatal(err)
+	}
+	_, vT := orbit.Velocity(mu, 0)
+	SBI0 := md3.Vec{X: rP}
+	VBI0 := md3.Vec{Y: vT}
+	E0 := orbit.SpecificEnergy(mu)
+
+	b.Run("Step", func(b *testing.B) {
+		coords := earth.GeocentricFromEarthFixedCoords(SBI0, 0)
+		integrator := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
+		var maxErrE float64
+		for b.Loop() {
+			_, SBI, VBI := integrator.Step(dt, md3.Vec{})
+			r, v := md3.Norm(SBI), md3.Norm(VBI)
+			E := 0.5*v*v - mu/r
+			if errE := math.Abs((E - E0) / E0); errE > maxErrE {
+				maxErrE = errE
+			}
+		}
+		b.ReportMetric(maxErrE, "|ΔE/E₀|")
+	})
+	b.Run("StepFast", func(b *testing.B) {
+		coords := earth.GeocentricFromEarthFixedCoords(SBI0, 0)
+		integrator := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
+		var maxErrE float64
+		for b.Loop() {
+			_, SBI, VBI := integrator.StepFast(dt, md3.Vec{})
+			r, v := md3.Norm(SBI), md3.Norm(VBI)
+			E := 0.5*v*v - mu/r
+			if errE := math.Abs((E - E0) / E0); errE > maxErrE {
+				maxErrE = errE
+			}
+		}
+		b.ReportMetric(maxErrE, "|ΔE/E₀|")
+	})
+}

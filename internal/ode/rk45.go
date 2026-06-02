@@ -58,9 +58,9 @@ func (rk *RK45) Init(ivp IVP1) {
 	rk.StepCount = 0
 }
 
-// State returns the current time and a copy of the current state vector.
+// State returns the current time and a view of the current state vector.
 func (rk *RK45) State() (t float64, y []float64) {
-	return rk.t, append([]float64(nil), rk.y...)
+	return rk.t, rk.y
 }
 
 // SetState overwrites the current integration state.
