@@ -22,10 +22,10 @@ type Parameters struct {
 }
 
 func (cfg Parameters) Validate() error {
-	if (cfg.AbsTolerance != 0 && cfg.MaxStep <= 0) ||
+	adaptive := cfg.AbsTolerance != 0 || cfg.RelTolerance != 0
+	if (adaptive && cfg.MaxStep <= 0) ||
 		cfg.MaxStep < cfg.MinStep ||
-		cfg.MinStep < 0 ||
-		(cfg.RelTolerance != 0 && cfg.MaxStep <= 0) {
+		cfg.MinStep < 0 {
 		return errors.New("invalid ODE parameters supplied")
 	}
 	return nil
@@ -54,18 +54,24 @@ type RKN1210 struct {
 	auxv                       [rk1210Len]md3.Vec
 	auxt                       [rk1210Len]float64
 	// Step control.
-	atol, minStep, maxStep float64
-	fx                     func(yppDst []md3.Vec, tv []float64, yv []md3.Vec)
+	atol, rtol, minStep, maxStep float64
+	fx                           func(yppDst []md3.Vec, tv []float64, yv []md3.Vec)
 }
 
 func (rk *RKN1210) Configure(relax, preConditioner float64, cfg Parameters) error {
 	if err := cfg.Validate(); err != nil {
 		return err
+	} else if cfg.AbsTolerance != 0 && cfg.RelTolerance != 0 {
+		// Unlike RK45 (scipy-style combined tolerances), RKN1210 has two
+		// distinct step controllers: absolute (legacy) and relative
+		// (GMAT RSSStep-like). Pick one.
+		return errors.New("rkn1210: AbsTolerance and RelTolerance are mutually exclusive")
 	} else if relax <= 0 || relax >= 1 {
 		return errors.New("bad relax factor")
 	} else if preConditioner <= 1 || preConditioner > 11 {
 		return errors.New("bad preconditioner")
 	}
+	rk.rtol = cfg.RelTolerance
 	rk.atol = cfg.AbsTolerance
 	rk.minStep = cfg.MinStep
 	rk.maxStep = cfg.MaxStep
@@ -95,13 +101,16 @@ func (rk *RKN1210) reset() {
 		precond: rk.precond,
 		relax:   rk.relax,
 		atol:    rk.atol,
+		rtol:    rk.rtol,
 		minStep: rk.minStep,
 		maxStep: rk.maxStep,
 	}
 }
 
 func (rk *RKN1210) Step(h float64) (float64, error) {
-	adaptive := rk.atol > 0
+	const maxStepAttempts = 50
+	adaptive := rk.atol > 0 || rk.rtol > 0
+	attempts := 0
 	var hadapt float64
 	var aux md3.Vec
 	y := rk.y
@@ -143,17 +152,41 @@ SOLVE:
 	}
 
 	if adaptive {
-		// Calculate the difference between high and low order terms.
-		aux = md3.Sub(rk.hFb, rk.hFbhat)
-		errMax := h * (math.Abs(aux.X) + math.Abs(aux.Y) + math.Abs(aux.Z)) // error ~ h*| y_l- y_h |
-		aux = md3.Sub(rk.hFDb, rk.hFDbhat)
-		// In taking the Max we use worst case error.
-		errMax = math.Max(errMax, math.Abs(aux.X)+math.Abs(aux.Y)+math.Abs(aux.Z)) // error ~ h*| y_l- y_h |
-		errRatio := rk.atol / (errMax * h * preCond)
-		hadapt = relax * math.Pow(errRatio, 1./preCond)
+		exceeded := false
+		if rk.rtol > 0 {
+			// Relative error control analogous to GMAT's RSSStep: the
+			// low-vs-high order estimate normalized by the step's state
+			// change, position and velocity blocks compared separately.
+			errPos := h * md3.Norm(md3.Sub(rk.hFb, rk.hFbhat))
+			errVel := md3.Norm(md3.Sub(rk.hFDb, rk.hFDbhat))
+			dPos := h * md3.Norm(md3.Add(dy, rk.hFbhat)) // position change over step
+			dVel := md3.Norm(rk.hFDbhat)                 // velocity change over step
+			const tiny = 1e-300                          // guard zero state change
+			errRel := math.Max(errPos/math.Max(dPos, tiny), errVel/math.Max(dVel, tiny))
+			exceeded = errRel > rk.rtol
+			// Standard controller: local error of the 10th-order solution
+			// scales as h^11 = h^precond (default preconditioner 11).
+			hadapt = relax * h * math.Pow(rk.rtol/math.Max(errRel, tiny), 1/preCond)
+		} else {
+			// Calculate the difference between high and low order terms.
+			aux = md3.Sub(rk.hFb, rk.hFbhat)
+			errMax := h * (math.Abs(aux.X) + math.Abs(aux.Y) + math.Abs(aux.Z)) // error ~ h*| y_l- y_h |
+			aux = md3.Sub(rk.hFDb, rk.hFDbhat)
+			// In taking the Max we use worst case error.
+			errMax = math.Max(errMax, math.Abs(aux.X)+math.Abs(aux.Y)+math.Abs(aux.Z)) // error ~ h*| y_l- y_h |
+			errRatio := rk.atol / (errMax * h * preCond)
+			hadapt = relax * math.Pow(errRatio, 1./preCond)
+			exceeded = errMax > rk.atol
+		}
 		hadapt = math.Min(math.Max(hadapt, rk.minStep), rk.maxStep)
-		if errMax > rk.atol && h > rk.minStep {
-			// Error is not permissible and we may redo the step.
+		if exceeded {
+			attempts++
+			if h <= rk.minStep {
+				return h, errors.New("rkn1210: error tolerance unattainable at minimum step size")
+			} else if attempts > maxStepAttempts {
+				return h, errors.New("rkn1210: error tolerance unattained after max step attempts")
+			}
+			// Error is not permissible and we redo the step.
 			h = hadapt
 			goto SOLVE
 		}
