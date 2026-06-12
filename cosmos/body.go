@@ -3,8 +3,6 @@
 package cosmos
 
 import (
-	"math"
-
 	"github.com/soypat/geometry/md3"
 )
 
@@ -91,16 +89,20 @@ func (b *Body) J3() float64 { return b.j3 }
 // J4 returns the SGP4 un-normalised fourth zonal harmonic.
 func (b *Body) J4() float64 { return b.j4 }
 
-// TEI returns the [T]^{EI} body-fixed ← inertial (MJ2000Eq) rotation tensor at
-// epoch e. For Earth this is the sidereal rotation about the pole by the
-// Greenwich mean sidereal time (Vallado Alg. 15, IAU-82 GMST); precession and
-// nutation of the pole itself are not modeled (GMAT applies the full IAU-76/FK5
-// reduction — the residual is quantified by the gmat-tests milestones).
+// TEI returns the [T]^{EI} body-fixed ← inertial (MJ2000Eq) rotation tensor
+// at epoch e using the IAU-76/FK5 reduction (Vallado sec. 3.7), as GMAT does
+// for its EarthFixed axes:
+//
+//	TEI = R3(GAST) · [nutation 1980] · [precession IAU-76]
+//
+// Polar motion is excluded (sub-arcsecond, ~10 m at the surface; GMAT reads
+// it from measured EOP data). The remaining gap to GMAT is the package-wide
+// ΔUT1 = 0 assumption inside GMST (≤0.9 s of rotation ≈ ≤420 m equatorial
+// displacement of the body-fixed frame, |2026 values| ≈ 0.1 s).
 func (b *Body) TEI(e Epoch) md3.Mat3 {
-	sin, cos := math.Sincos(e.GMST() + b.celestialLong)
-	return md3.NewMat3([]float64{
-		cos, sin, 0,
-		-sin, cos, 0,
-		0, 0, 1,
-	})
+	tTT := e.secsTT / (36525 * secsPerDay)
+	prec := precessionMOD(tTT)
+	dPsi, dEps, epsBar := nutation1980Angles(tTT)
+	nut := md3.MulMat3(rot1(-(epsBar + dEps)), md3.MulMat3(rot3(-dPsi), rot1(epsBar)))
+	return md3.MulMat3(rot3(e.GAST()+b.celestialLong), md3.MulMat3(nut, prec))
 }
