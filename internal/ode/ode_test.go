@@ -74,6 +74,21 @@ func stepVerner9(rk *Verner9, tf float64) {
 	}
 }
 
+// stepFeagin12 advances rk to tf using adaptive steps.
+func stepFeagin12(rk *Feagin12, tf float64) {
+	h := rk.hMax
+	for {
+		t, _ := rk.State()
+		if t >= tf {
+			break
+		}
+		if t+h > tf {
+			h = tf - t
+		}
+		h = rk.Step(h)
+	}
+}
+
 // stepRKN advances rk to tf using adaptive steps.
 func stepRKN(t testing.TB, rk *RKN1210, tf float64) {
 	t.Helper()
@@ -236,6 +251,62 @@ func TestVerner9HarmonicOscillator(t *testing.T) {
 	t.Logf("steps=%d  errY=%.2e  errV=%.2e", rk.StepCount, errY, errV)
 }
 
+func TestFeagin12HarmonicOscillator(t *testing.T) {
+	const (
+		atol = 1e-9
+		rtol = 1e-9
+		tf   = 10 * math.Pi // 5 full periods
+	)
+	var rk Feagin12
+	if err := rk.Configure(Parameters{
+		AbsTolerance: atol,
+		RelTolerance: rtol,
+		MinStep:      1e-8,
+		MaxStep:      0.5,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rk.Init(IVP1{Y0: []float64{1, 0}, T0: 0, Func: oscRates1})
+
+	stepFeagin12(&rk, tf)
+
+	_, y := rk.State()
+	wantY, wantV := oscExact(tf)
+	errY := math.Abs(y[0] - wantY)
+	errV := math.Abs(y[1] - wantV)
+
+	const limit = 1e4 * atol
+	if errY > limit {
+		t.Errorf("position error %g exceeds limit %g", errY, limit)
+	}
+	if errV > limit {
+		t.Errorf("velocity error %g exceeds limit %g", errV, limit)
+	}
+	t.Logf("steps=%d  errY=%.2e  errV=%.2e", rk.StepCount, errY, errV)
+}
+
+// TestFeagin12Consistency verifies the row-sum condition Σⱼ aᵢⱼ = cᵢ that every
+// consistent Runge-Kutta tableau must satisfy. It catches a coefficient placed
+// at the wrong row/column, and that the b-weights sum to 1.
+func TestFeagin12Consistency(t *testing.T) {
+	for i := 1; i < 25; i++ {
+		sum := 0.0
+		for j := 0; j < i; j++ {
+			sum += feaginA[i][j]
+		}
+		if d := math.Abs(sum - feaginC[i]); d > 1e-13 {
+			t.Errorf("stage %d: Σa=%.16g  c=%.16g  diff=%.2e", i, sum, feaginC[i], d)
+		}
+	}
+	bSum := 0.0
+	for _, b := range feaginB {
+		bSum += b
+	}
+	if d := math.Abs(bSum - 1); d > 1e-13 {
+		t.Errorf("b weights sum to %.16g, want 1 (diff %.2e)", bSum, d)
+	}
+}
+
 func TestRKN1210HarmonicOscillator(t *testing.T) {
 	const (
 		atol = 1e-9
@@ -377,6 +448,17 @@ func BenchmarkIVP_noadaptivestep(b *testing.B) {
 			integ.Step(step)
 		}
 	})
+	b.Run("Feagin12", func(b *testing.B) {
+		var integ Feagin12
+		err := integ.Configure(params)
+		if err != nil {
+			b.Fatal(err)
+		}
+		integ.Init(ivp)
+		for b.Loop() {
+			integ.Step(step)
+		}
+	})
 	b.Run("RKN12(10)", func(b *testing.B) {
 		var integ RKN1210
 		err := integ.Configure(DefaultRelaxFactor, DefaultPreconditioner, params)
@@ -456,6 +538,24 @@ func BenchmarkIVP_adaptiveconvergence(b *testing.B) {
 			integ.SetState(0, []float64{1, 0})
 			integ.StepCount = 0
 			stepVerner9(&integ, tf)
+			_, y := integ.State()
+			errY = math.Abs(y[0] - wantY)
+		}
+		b.ReportMetric(float64(integ.StepCount), "steps/op")
+		b.ReportMetric(errY*1e9, "errY×1e-9")
+	})
+	b.Run("Feagin12", func(b *testing.B) {
+		var integ Feagin12
+		if err := integ.Configure(params); err != nil {
+			b.Fatal(err)
+		}
+		integ.Init(ivp)
+		b.ReportAllocs()
+		var errY float64
+		for b.Loop() {
+			integ.SetState(0, []float64{1, 0})
+			integ.StepCount = 0
+			stepFeagin12(&integ, tf)
 			_, y := integ.State()
 			errY = math.Abs(y[0] - wantY)
 		}

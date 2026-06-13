@@ -10,6 +10,60 @@ type IVP1 struct {
 	Func func(dst, y []float64, t float64)
 }
 
+// selectInitialStep computes a safe first step size for an explicit IVP1 solver
+// following Hairer, Norsett & Wanner §II.4, the same algorithm scipy uses in
+// select_initial_step. errOrder is the order of the method's error estimate
+// (one less than the order it advances with). It is shared by every adaptive
+// IVP1 integrator in this package; the per-solver SelectInitialStep methods are
+// thin wrappers that pass their own errOrder.
+func selectInitialStep(fn func(dst, y []float64, t float64), t float64, y []float64, atol, rtol, errOrder float64) float64 {
+	n := len(y)
+	nf := float64(n)
+
+	f0 := make([]float64, n)
+	fn(f0, y, t)
+
+	d0, d1 := 0.0, 0.0
+	for i, yi := range y {
+		sc := atol + math.Abs(yi)*rtol
+		d0 += (yi / sc) * (yi / sc)
+		d1 += (f0[i] / sc) * (f0[i] / sc)
+	}
+	d0 = math.Sqrt(d0 / nf)
+	d1 = math.Sqrt(d1 / nf)
+
+	var h0 float64
+	if d0 < 1e-5 || d1 < 1e-5 {
+		h0 = 1e-6
+	} else {
+		h0 = 0.01 * d0 / d1
+	}
+
+	// Euler probe step to estimate second derivative.
+	y1 := make([]float64, n)
+	for i, yi := range y {
+		y1[i] = yi + h0*f0[i]
+	}
+	f1 := make([]float64, n)
+	fn(f1, y1, t+h0)
+
+	d2 := 0.0
+	for i := range f1 {
+		sc := atol + math.Abs(y[i])*rtol
+		dd := (f1[i] - f0[i]) / sc
+		d2 += dd * dd
+	}
+	d2 = math.Sqrt(d2/nf) / h0
+
+	var h1 float64
+	if maxD := math.Max(d1, d2); maxD <= 1e-5 {
+		h1 = math.Max(1e-6, h0*1e-3)
+	} else {
+		h1 = math.Pow(0.01/maxD, 1.0/(errOrder+1))
+	}
+	return math.Min(100*h0, h1)
+}
+
 // RK45 is a Runge-Kutta-Dormand-Prince 4(5) integrator for first-order ODE systems.
 // Its step controller matches scipy's RK45 exactly.
 type RK45 struct {
@@ -72,56 +126,7 @@ func (rk *RK45) SetState(t float64, y []float64) {
 // SelectInitialStep computes a safe first step size following Hairer, Norsett &
 // Wanner §II.4, the same algorithm used by scipy's select_initial_step.
 func (rk *RK45) SelectInitialStep() float64 {
-	const errOrder = 4.0
-	n := len(rk.y)
-	nf := float64(n)
-	fn := rk.fn
-	y := rk.y
-	t := rk.t
-	atol, rtol := rk.atol, rk.rtol
-
-	f0 := make([]float64, n)
-	fn(f0, y, t)
-
-	d0, d1 := 0.0, 0.0
-	for i, yi := range y {
-		sc := atol + math.Abs(yi)*rtol
-		d0 += (yi / sc) * (yi / sc)
-		d1 += (f0[i] / sc) * (f0[i] / sc)
-	}
-	d0 = math.Sqrt(d0 / nf)
-	d1 = math.Sqrt(d1 / nf)
-
-	var h0 float64
-	if d0 < 1e-5 || d1 < 1e-5 {
-		h0 = 1e-6
-	} else {
-		h0 = 0.01 * d0 / d1
-	}
-
-	// Euler probe step to estimate second derivative.
-	y1 := make([]float64, n)
-	for i, yi := range y {
-		y1[i] = yi + h0*f0[i]
-	}
-	f1 := make([]float64, n)
-	fn(f1, y1, t+h0)
-
-	d2 := 0.0
-	for i := range f1 {
-		sc := atol + math.Abs(y[i])*rtol
-		dd := (f1[i] - f0[i]) / sc
-		d2 += dd * dd
-	}
-	d2 = math.Sqrt(d2/nf) / h0
-
-	var h1 float64
-	if maxD := math.Max(d1, d2); maxD <= 1e-5 {
-		h1 = math.Max(1e-6, h0*1e-3)
-	} else {
-		h1 = math.Pow(0.01/maxD, 1.0/(errOrder+1))
-	}
-	return math.Min(100*h0, h1)
+	return selectInitialStep(rk.fn, rk.t, rk.y, rk.atol, rk.rtol, 4.0)
 }
 
 // Step performs a single RK45 step. Returns the suggested step size for the next call.
