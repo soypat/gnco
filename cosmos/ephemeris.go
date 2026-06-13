@@ -65,9 +65,10 @@ func (*AnalyticSun) Position(e Epoch) md3.Vec {
 }
 
 // Shadow returns the angular eclipse margins [rad] of a point at inertial
-// position posBI [m] occulted by the central body (sphere of occRadius [m]
-// at the origin) with the Sun at sunBI [m], per the apparent-radius cone
-// geometry (Vallado sec. 5.3 / GMAT EclipseLocator):
+// position posBI [m] occulted by the central body (oblate spheroid of
+// equatorial radius occRadius [m] and flattening occFlattening, pole along
+// +Z, centered at the origin) with the Sun at sunBI [m], per the
+// apparent-radius cone geometry (Vallado sec. 5.3):
 //
 //	a = asin(sunRadius/|sun-pos|)   apparent Sun radius
 //	b = asin(occRadius/|pos|)       apparent body radius
@@ -75,7 +76,22 @@ func (*AnalyticSun) Position(e Epoch) md3.Vec {
 //
 // penumbra = c-(a+b): negative while any sunlight is blocked.
 // umbra = c-(b-a): negative while the Sun is fully occulted.
-func Shadow(sunBI, posBI md3.Vec, sunRadius, occRadius float64) (penumbra, umbra float64) {
+//
+// Oblateness is handled by stretching both positions along Z by 1/(1-f),
+// mapping the spheroid to the occRadius sphere: lines map to lines, so the
+// grazing-ray (margin zero) crossings are exact; the Sun's disk distortion
+// under the map is ~0.3% of its 0.27° apparent radius (~0.04 s of timing).
+// GMAT's EclipseLocator likewise occults with the oblate body — a spherical
+// model overestimates LEO umbra durations by ~12 s for near-polar orbits.
+// Pass occFlattening=0 for a spherical occulter. The +Z pole assumption in
+// the inertial frame neglects precession of the true pole (second-order on
+// an already small correction).
+func Shadow(sunBI, posBI md3.Vec, sunRadius, occRadius, occFlattening float64) (penumbra, umbra float64) {
+	if occFlattening != 0 {
+		zStretch := 1 / (1 - occFlattening)
+		sunBI.Z *= zStretch
+		posBI.Z *= zStretch
+	}
 	sunRel := md3.Sub(sunBI, posBI)
 	dSun := md3.Norm(sunRel)
 	dOcc := md3.Norm(posBI)

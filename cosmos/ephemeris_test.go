@@ -52,23 +52,23 @@ func TestShadowGeometry(t *testing.T) {
 	const earthR = 6378136.3
 	sunPos := md3.Vec{X: AU}
 	// Directly behind Earth at LEO altitude: deep umbra.
-	pen, umb := Shadow(sunPos, md3.Vec{X: -6928.5e3}, sunR, earthR)
+	pen, umb := Shadow(sunPos, md3.Vec{X: -6928.5e3}, sunR, earthR, 0)
 	if pen >= 0 || umb >= 0 {
 		t.Errorf("antisolar LEO point: penumbra=%.4f umbra=%.4f, want both negative", pen, umb)
 	}
 	// Sunlit side: fully illuminated.
-	pen, umb = Shadow(sunPos, md3.Vec{X: 6928.5e3}, sunR, earthR)
+	pen, umb = Shadow(sunPos, md3.Vec{X: 6928.5e3}, sunR, earthR, 0)
 	if pen <= 0 || umb <= 0 {
 		t.Errorf("subsolar LEO point: penumbra=%.4f umbra=%.4f, want both positive", pen, umb)
 	}
 	// Quadrature: illuminated.
-	pen, _ = Shadow(sunPos, md3.Vec{Y: 6928.5e3}, sunR, earthR)
+	pen, _ = Shadow(sunPos, md3.Vec{Y: 6928.5e3}, sunR, earthR, 0)
 	if pen <= 0 {
 		t.Errorf("quadrature point: penumbra=%.4f, want positive", pen)
 	}
 	// Umbra cone length ~1.385e6 km: beyond it the eclipse is annular, the
 	// umbra margin turns positive while penumbra stays negative.
-	pen, umb = Shadow(sunPos, md3.Vec{X: -2e9}, sunR, earthR)
+	pen, umb = Shadow(sunPos, md3.Vec{X: -2e9}, sunR, earthR, 0)
 	if umb <= 0 || pen >= 0 {
 		t.Errorf("beyond umbra cone: penumbra=%.6f umbra=%.6f, want negative/positive (annular)", pen, umb)
 	}

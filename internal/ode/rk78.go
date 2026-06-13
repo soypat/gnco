@@ -2,17 +2,10 @@ package ode
 
 import "math"
 
-// IVP1 defines a first-order initial value problem with an n-dimensional slice state.
-type IVP1 struct {
-	Y0 []float64
-	T0 float64
-	// Func evaluates the derivative: dst[i] = f_i(t, y).
-	Func func(dst, y []float64, t float64)
-}
-
-// RK45 is a Runge-Kutta-Dormand-Prince 4(5) integrator for first-order ODE systems.
-// Its step controller matches scipy's RK45 exactly.
-type RK45 struct {
+// RKF78 is a Runge-Kutta-Fehlberg 7(8) integrator for first-order ODE systems.
+// It uses the 13-stage Fehlberg tableau and advances with the 8th-order solution,
+// estimating the local error from Fehlberg's embedded 7th-order term.
+type RKF78 struct {
 	// Step control — set before calling Init or Step.
 	hMin, hMax float64
 	atol, rtol float64
@@ -26,24 +19,26 @@ type RK45 struct {
 	fn func(dst, y []float64, t float64)
 
 	// Workspace (allocated once by Init).
-	k      [7][]float64
+	k      [13][]float64
 	tmp    []float64
 	yNew   []float64
 	errBuf []float64
 }
 
-func (rk45 *RK45) Configure(cfg Parameters) error {
+// Configure validates and applies step-control parameters. Call before Init.
+func (rk *RKF78) Configure(cfg Parameters) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	rk45.atol = cfg.AbsTolerance
-	rk45.rtol = cfg.RelTolerance
-	rk45.hMax = cfg.MaxStep
-	rk45.hMin = cfg.MinStep
+	rk.atol = cfg.AbsTolerance
+	rk.rtol = cfg.RelTolerance
+	rk.hMax = cfg.MaxStep
+	rk.hMin = cfg.MinStep
 	return nil
 }
 
-func (rk *RK45) Init(ivp IVP1) {
+// Init binds the initial value problem and allocates workspace.
+func (rk *RKF78) Init(ivp IVP1) {
 	n := len(ivp.Y0)
 	rk.t = ivp.T0
 	rk.y = append(make([]float64, 0, n), ivp.Y0...)
@@ -59,20 +54,20 @@ func (rk *RK45) Init(ivp IVP1) {
 }
 
 // State returns the current time and a view of the current state vector.
-func (rk *RK45) State() (t float64, y []float64) {
+func (rk *RKF78) State() (t float64, y []float64) {
 	return rk.t, rk.y
 }
 
 // SetState overwrites the current integration state.
-func (rk *RK45) SetState(t float64, y []float64) {
+func (rk *RKF78) SetState(t float64, y []float64) {
 	rk.t = t
 	copy(rk.y, y)
 }
 
 // SelectInitialStep computes a safe first step size following Hairer, Norsett &
 // Wanner §II.4, the same algorithm used by scipy's select_initial_step.
-func (rk *RK45) SelectInitialStep() float64 {
-	const errOrder = 4.0
+func (rk *RKF78) SelectInitialStep() float64 {
+	const errOrder = 7.0
 	n := len(rk.y)
 	nf := float64(n)
 	fn := rk.fn
@@ -124,14 +119,14 @@ func (rk *RK45) SelectInitialStep() float64 {
 	return math.Min(100*h0, h1)
 }
 
-// Step performs a single RK45 step. Returns the suggested step size for the next call.
+// Step performs a single RKF78 step. Returns the suggested step size for the next call.
 // In non-adaptive mode (atol=rtol=0) the step is always accepted and h is returned unchanged.
-func (rk *RK45) Step(h float64) float64 {
+func (rk *RKF78) Step(h float64) float64 {
 	const (
 		safety = 0.9
 		minFac = 0.2
 		maxFac = 10.0
-		order  = 5.0
+		order  = 8.0
 	)
 	adaptive := rk.atol > 0 || rk.rtol > 0
 	t := rk.t
@@ -147,24 +142,24 @@ func (rk *RK45) Step(h float64) float64 {
 		// Stage 0.
 		fn(rk.k[0], y, t)
 
-		// Stages 1..6.
-		for i := 1; i < 7; i++ {
+		// Stages 1..12.
+		for i := 1; i < 13; i++ {
 			for c := range n {
 				sum := 0.0
 				for j := range i {
-					sum += dpA[i][j] * rk.k[j][c]
+					sum += fbA[i][j] * rk.k[j][c]
 				}
 				rk.tmp[c] = y[c] + hEff*sum
 			}
-			fn(rk.k[i], rk.tmp, t+dpC[i]*hEff)
+			fn(rk.k[i], rk.tmp, t+fbC[i]*hEff)
 		}
 
-		// 5th-order solution and error estimate.
+		// 8th-order solution and embedded 7th-order error estimate.
 		for c := range n {
 			sumB, sumE := 0.0, 0.0
-			for i := range 7 {
-				sumB += dpB[i] * rk.k[i][c]
-				sumE += dpE[i] * rk.k[i][c]
+			for i := range 13 {
+				sumB += fbB[i] * rk.k[i][c]
+				sumE += fbE[i] * rk.k[i][c]
 			}
 			rk.yNew[c] = y[c] + hEff*sumB
 			rk.errBuf[c] = hEff * sumE
@@ -215,30 +210,41 @@ func (rk *RK45) Step(h float64) float64 {
 	}
 }
 
-// Dormand-Prince RK45 coefficients — match scipy's RK45 exactly.
+// Runge-Kutta-Fehlberg 7(8) coefficients (Fehlberg 1968, 13 stages).
+// The method advances with the 8th-order weights fbB; the local error is
+// estimated from the embedded 7th-order pair via fbE = b8 − b7, which reduces
+// to ±41/840 on stages 0, 10, 11, 12.
 var (
-	dpC = [7]float64{0, 1.0 / 5, 3.0 / 10, 4.0 / 5, 8.0 / 9, 1, 1}
-
-	dpA = [7][6]float64{
-		{},
-		{1.0 / 5},
-		{3.0 / 40, 9.0 / 40},
-		{44.0 / 45, -56.0 / 15, 32.0 / 9},
-		{19372.0 / 6561, -25360.0 / 2187, 64448.0 / 6561, -212.0 / 729},
-		{9017.0 / 3168, -355.0 / 33, 46732.0 / 5247, 49.0 / 176, -5103.0 / 18656},
-		{35.0 / 384, 0, 500.0 / 1113, 125.0 / 192, -2187.0 / 6784, 11.0 / 84},
+	fbC = [13]float64{
+		0, 2.0 / 27, 1.0 / 9, 1.0 / 6, 5.0 / 12, 1.0 / 2,
+		5.0 / 6, 1.0 / 6, 2.0 / 3, 1.0 / 3, 1, 0, 1,
 	}
 
-	dpB = [7]float64{35.0 / 384, 0, 500.0 / 1113, 125.0 / 192, -2187.0 / 6784, 11.0 / 84, 0}
+	fbA = [13][12]float64{
+		{},
+		{2.0 / 27},
+		{1.0 / 36, 1.0 / 12},
+		{1.0 / 24, 0, 1.0 / 8},
+		{5.0 / 12, 0, -25.0 / 16, 25.0 / 16},
+		{1.0 / 20, 0, 0, 1.0 / 4, 1.0 / 5},
+		{-25.0 / 108, 0, 0, 125.0 / 108, -65.0 / 27, 125.0 / 54},
+		{31.0 / 300, 0, 0, 0, 61.0 / 225, -2.0 / 9, 13.0 / 900},
+		{2, 0, 0, -53.0 / 6, 704.0 / 45, -107.0 / 9, 67.0 / 90, 3},
+		{-91.0 / 108, 0, 0, 23.0 / 108, -976.0 / 135, 311.0 / 54, -19.0 / 60, 17.0 / 6, -1.0 / 12},
+		{2383.0 / 4100, 0, 0, -341.0 / 164, 4496.0 / 1025, -301.0 / 82, 2133.0 / 4100, 45.0 / 82, 45.0 / 164, 18.0 / 41},
+		{3.0 / 205, 0, 0, 0, 0, -6.0 / 41, -3.0 / 205, -3.0 / 41, 3.0 / 41, 6.0 / 41},
+		{-1777.0 / 4100, 0, 0, -341.0 / 164, 4496.0 / 1025, -289.0 / 82, 2193.0 / 4100, 51.0 / 82, 33.0 / 164, 12.0 / 41, 0, 1},
+	}
 
-	// Error coefficients in direct form (avoids cancellation from b-b* form).
-	dpE = [7]float64{
-		71.0 / 57600,
-		0,
-		-71.0 / 16695,
-		71.0 / 1920,
-		-17253.0 / 339200,
-		22.0 / 525,
-		-1.0 / 40,
+	// 8th-order solution weights.
+	fbB = [13]float64{
+		0, 0, 0, 0, 0, 34.0 / 105, 9.0 / 35, 9.0 / 35,
+		9.0 / 280, 9.0 / 280, 0, 41.0 / 840, 41.0 / 840,
+	}
+
+	// Error weights (b8 − b7); only stages 0, 10, 11, 12 are nonzero.
+	fbE = [13]float64{
+		-41.0 / 840, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		-41.0 / 840, 41.0 / 840, 41.0 / 840,
 	}
 )
