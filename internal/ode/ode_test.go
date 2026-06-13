@@ -59,6 +59,21 @@ func stepRKF78(rk *RKF78, tf float64) {
 	}
 }
 
+// stepVerner9 advances rk to tf using adaptive steps.
+func stepVerner9(rk *Verner9, tf float64) {
+	h := rk.hMax
+	for {
+		t, _ := rk.State()
+		if t >= tf {
+			break
+		}
+		if t+h > tf {
+			h = tf - t
+		}
+		h = rk.Step(h)
+	}
+}
+
 // stepRKN advances rk to tf using adaptive steps.
 func stepRKN(t testing.TB, rk *RKN1210, tf float64) {
 	t.Helper()
@@ -185,6 +200,40 @@ func TestRKF78SelectInitialStep(t *testing.T) {
 		t.Errorf("SelectInitialStep returned %g, want finite positive", h)
 	}
 	t.Logf("initial step h=%.6g", h)
+}
+
+func TestVerner9HarmonicOscillator(t *testing.T) {
+	const (
+		atol = 1e-9
+		rtol = 1e-9
+		tf   = 10 * math.Pi // 5 full periods
+	)
+	var rk Verner9
+	if err := rk.Configure(Parameters{
+		AbsTolerance: atol,
+		RelTolerance: rtol,
+		MinStep:      1e-8,
+		MaxStep:      0.5,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rk.Init(IVP1{Y0: []float64{1, 0}, T0: 0, Func: oscRates1})
+
+	stepVerner9(&rk, tf)
+
+	_, y := rk.State()
+	wantY, wantV := oscExact(tf)
+	errY := math.Abs(y[0] - wantY)
+	errV := math.Abs(y[1] - wantV)
+
+	const limit = 1e4 * atol
+	if errY > limit {
+		t.Errorf("position error %g exceeds limit %g", errY, limit)
+	}
+	if errV > limit {
+		t.Errorf("velocity error %g exceeds limit %g", errV, limit)
+	}
+	t.Logf("steps=%d  errY=%.2e  errV=%.2e", rk.StepCount, errY, errV)
 }
 
 func TestRKN1210HarmonicOscillator(t *testing.T) {
@@ -317,6 +366,17 @@ func BenchmarkIVP_noadaptivestep(b *testing.B) {
 			integ.Step(step)
 		}
 	})
+	b.Run("Verner9", func(b *testing.B) {
+		var integ Verner9
+		err := integ.Configure(params)
+		if err != nil {
+			b.Fatal(err)
+		}
+		integ.Init(ivp)
+		for b.Loop() {
+			integ.Step(step)
+		}
+	})
 	b.Run("RKN12(10)", func(b *testing.B) {
 		var integ RKN1210
 		err := integ.Configure(DefaultRelaxFactor, DefaultPreconditioner, params)
@@ -378,6 +438,24 @@ func BenchmarkIVP_adaptiveconvergence(b *testing.B) {
 			integ.SetState(0, []float64{1, 0})
 			integ.StepCount = 0
 			stepRKF78(&integ, tf)
+			_, y := integ.State()
+			errY = math.Abs(y[0] - wantY)
+		}
+		b.ReportMetric(float64(integ.StepCount), "steps/op")
+		b.ReportMetric(errY*1e9, "errY×1e-9")
+	})
+	b.Run("Verner9", func(b *testing.B) {
+		var integ Verner9
+		if err := integ.Configure(params); err != nil {
+			b.Fatal(err)
+		}
+		integ.Init(ivp)
+		b.ReportAllocs()
+		var errY float64
+		for b.Loop() {
+			integ.SetState(0, []float64{1, 0})
+			integ.StepCount = 0
+			stepVerner9(&integ, tf)
 			_, y := integ.State()
 			errY = math.Abs(y[0] - wantY)
 		}
