@@ -60,7 +60,7 @@ func stepRKF78(rk *RKF78, tf float64) {
 }
 
 // stepRKN advances rk to tf using adaptive steps.
-func stepRKN(t *testing.T, rk *RKN1210, tf float64) {
+func stepRKN(t testing.TB, rk *RKN1210, tf float64) {
 	t.Helper()
 	h := rk.maxStep
 	for {
@@ -290,10 +290,11 @@ func TestRK45SelectInitialStep(t *testing.T) {
 	t.Logf("initial step h=%.6g", h)
 }
 
-func BenchmarkIVP1_noadaptivestep(b *testing.B) {
+func BenchmarkIVP_noadaptivestep(b *testing.B) {
 	const step = 0.1
 	params := Parameters{}
 	ivp := IVP1{Y0: []float64{1, 0}, T0: 0, Func: oscRates1}
+	ivp2 := IVP2{Y0: md3.Vec{X: 1}, DY0: md3.Vec{}, T0: 0, Func: oscRates2}
 	b.Run("RK4(5)", func(b *testing.B) {
 		var integ RK45
 		err := integ.Configure(params)
@@ -305,7 +306,7 @@ func BenchmarkIVP1_noadaptivestep(b *testing.B) {
 			integ.Step(step)
 		}
 	})
-	b.Run("RK7(8)", func(b *testing.B) {
+	b.Run("RKF7(8)", func(b *testing.B) {
 		var integ RKF78
 		err := integ.Configure(params)
 		if err != nil {
@@ -316,16 +317,27 @@ func BenchmarkIVP1_noadaptivestep(b *testing.B) {
 			integ.Step(step)
 		}
 	})
+	b.Run("RKN12(10)", func(b *testing.B) {
+		var integ RKN1210
+		err := integ.Configure(DefaultRelaxFactor, DefaultPreconditioner, params)
+		if err != nil {
+			b.Fatal(err)
+		}
+		integ.Init(ivp2)
+		for b.Loop() {
+			integ.Step(step)
+		}
+	})
 }
 
-// BenchmarkIVP1_adaptiveconvergence integrates the harmonic oscillator over one period
+// BenchmarkIVP_adaptiveconvergence integrates the harmonic oscillator over one period
 // with adaptive step control at a fixed tolerance. Unlike the non-adaptive
 // benchmark, this exercises the error-norm / step-controller path (where the
 // sqrt optimization lives) and reports cost-per-accuracy: ns/op is the time to
 // reach tf, while the steps/op and err metrics show how many steps and how much
 // final position error each method needed to get there. Compare ns/op together
 // with err — RK7(8) costs more per step but takes far fewer of them.
-func BenchmarkIVP1_adaptiveconvergence(b *testing.B) {
+func BenchmarkIVP_adaptiveconvergence(b *testing.B) {
 	const (
 		atol = 1e-9
 		rtol = 1e-9
@@ -333,6 +345,7 @@ func BenchmarkIVP1_adaptiveconvergence(b *testing.B) {
 	)
 	params := Parameters{AbsTolerance: atol, RelTolerance: rtol, MinStep: 1e-8, MaxStep: 0.5}
 	ivp := IVP1{Y0: []float64{1, 0}, T0: 0, Func: oscRates1}
+	ivp2 := IVP2{Y0: md3.Vec{X: 1}, DY0: md3.Vec{}, T0: 0, Func: oscRates2}
 	wantY, _ := oscExact(tf)
 
 	b.Run("RK4(5)", func(b *testing.B) {
@@ -353,7 +366,7 @@ func BenchmarkIVP1_adaptiveconvergence(b *testing.B) {
 		b.ReportMetric(float64(integ.StepCount), "steps/op")
 		b.ReportMetric(errY*1e9, "errY×1e-9")
 	})
-	b.Run("RK7(8)", func(b *testing.B) {
+	b.Run("RKF7(8)", func(b *testing.B) {
 		var integ RKF78
 		if err := integ.Configure(params); err != nil {
 			b.Fatal(err)
@@ -367,6 +380,26 @@ func BenchmarkIVP1_adaptiveconvergence(b *testing.B) {
 			stepRKF78(&integ, tf)
 			_, y := integ.State()
 			errY = math.Abs(y[0] - wantY)
+		}
+		b.ReportMetric(float64(integ.StepCount), "steps/op")
+		b.ReportMetric(errY*1e9, "errY×1e-9")
+	})
+	b.Run("RKN12(10)", func(b *testing.B) {
+		var integ RKN1210
+		p2 := params
+		p2.RelTolerance = 0
+		if err := integ.Configure(DefaultRelaxFactor, DefaultPreconditioner, p2); err != nil {
+			b.Fatal(err)
+		}
+		integ.Init(ivp2)
+		b.ReportAllocs()
+		var errY float64
+		for b.Loop() {
+			integ.SetState(0, ivp2.Y0, ivp2.DY0)
+			integ.StepCount = 0
+			stepRKN(b, &integ, tf)
+			_, y, _ := integ.State()
+			errY = math.Abs(y.X - wantY)
 		}
 		b.ReportMetric(float64(integ.StepCount), "steps/op")
 		b.ReportMetric(errY*1e9, "errY×1e-9")

@@ -56,6 +56,7 @@ type RKN1210 struct {
 	// Step control.
 	atol, rtol, minStep, maxStep float64
 	fx                           func(yppDst []md3.Vec, tv []float64, yv []md3.Vec)
+	StepCount                    int
 }
 
 func (rk *RKN1210) Configure(relax, preConditioner float64, cfg Parameters) error {
@@ -198,6 +199,7 @@ SOLVE:
 	rk.y = md3.Add(rk.y, md3.Scale(h, aux))
 	rk.dy = md3.Add(rk.dy, rk.hFDbhat)
 	rk.dom += h
+	rk.StepCount++
 	if adaptive {
 		// The error is within tolerance and we may suggest the user use a larger step.
 		// Modify return value to suggest new step.
