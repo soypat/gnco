@@ -104,5 +104,6 @@ func (b *Body) TEI(e Epoch) md3.Mat3 {
 	prec := precessionMOD(tTT)
 	dPsi, dEps, epsBar := nutation1980Angles(tTT)
 	nut := md3.MulMat3(rot1(-(epsBar + dEps)), md3.MulMat3(rot3(-dPsi), rot1(epsBar)))
-	return md3.MulMat3(rot3(e.GAST()+b.celestialLong), md3.MulMat3(nut, prec))
+	gast := e.gastFromNutation(dPsi, epsBar)
+	return md3.MulMat3(rot3(gast+b.celestialLong), md3.MulMat3(nut, prec))
 }

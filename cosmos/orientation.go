@@ -60,6 +60,14 @@ func nutation1980Angles(tTT float64) (dPsi, dEps, epsBar float64) {
 func (e Epoch) GAST() float64 {
 	tTT := e.secsTT / (36525 * secsPerDay)
 	dPsi, _, epsBar := nutation1980Angles(tTT)
+	return e.gastFromNutation(dPsi, epsBar)
+}
+
+// gastFromNutation computes GAST given the already-evaluated nutation in
+// longitude dPsi and mean obliquity epsBar, avoiding a second evaluation of
+// the 106-term nutation series when the caller (e.g. TEI) already has them.
+func (e Epoch) gastFromNutation(dPsi, epsBar float64) float64 {
+	tTT := e.secsTT / (36525 * secsPerDay)
 	const d2r = math.Pi / 180
 	om := (125.04452222 - (5*360+134.1362608)*tTT + 0.0020708*tTT*tTT + 2.2e-6*tTT*tTT*tTT) * d2r
 	eqEquinox := dPsi*math.Cos(epsBar) + (0.00264*math.Sin(om)+0.000063*math.Sin(2*om))*arcsecToRad
