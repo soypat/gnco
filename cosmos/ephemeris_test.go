@@ -16,7 +16,7 @@ func TestAnalyticSunInvariants(t *testing.T) {
 	// March 2026 equinox: 20 Mar 2026 ~14:46 UTC. Declination crosses zero on
 	// the equator OF DATE; in J2000 the 2026 equinox sits at ~-0.146° from
 	// 26 years of precession. Check both: MOD-frame dec ~0, J2000 dec ~-0.146°.
-	e, _ := NewEpochUTC(2026, time.March, 20, 14, 46, 0)
+	e := EpochFromTime(time.Date(2026, time.March, 20, 14, 46, 0, 0, time.UTC))
 	p := sun.Position(e)
 	dec := math.Asin(p.Z/md3.Norm(p)) * d
 	if math.Abs(dec - -0.146) > 0.05 {
@@ -29,7 +29,7 @@ func TestAnalyticSunInvariants(t *testing.T) {
 	}
 
 	// June 2026 solstice: 21 Jun 2026 ~08:25 UTC. Max declination ≈ +23.44°.
-	e, _ = NewEpochUTC(2026, time.June, 21, 8, 25, 0)
+	e = EpochFromTime(time.Date(2026, time.June, 21, 8, 25, 0, 0, time.UTC))
 	p = sun.Position(e)
 	dec = math.Asin(p.Z/md3.Norm(p)) * d
 	if math.Abs(dec-23.44) > 0.05 {
@@ -37,11 +37,11 @@ func TestAnalyticSunInvariants(t *testing.T) {
 	}
 
 	// Distance: perihelion (early Jan) ~0.9833 AU, aphelion (early Jul) ~1.0167 AU.
-	e, _ = NewEpochUTC(2026, time.January, 3, 12, 0, 0)
+	e = EpochFromTime(time.Date(2026, time.January, 3, 12, 0, 0, 0, time.UTC))
 	if r := md3.Norm(sun.Position(e)) / AU; math.Abs(r-0.9833) > 0.002 {
 		t.Errorf("perihelion distance = %.5f AU, want ~0.9833", r)
 	}
-	e, _ = NewEpochUTC(2026, time.July, 5, 12, 0, 0)
+	e = EpochFromTime(time.Date(2026, time.July, 5, 12, 0, 0, 0, time.UTC))
 	if r := md3.Norm(sun.Position(e)) / AU; math.Abs(r-1.0167) > 0.002 {
 		t.Errorf("aphelion distance = %.5f AU, want ~1.0167", r)
 	}

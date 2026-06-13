@@ -1,9 +1,7 @@
 package cosmos
 
 import (
-	"fmt"
 	"math"
-	"strings"
 	"time"
 )
 
@@ -49,53 +47,29 @@ func deltaAT(mjdUTC float64) float64 {
 	return leapSeconds[0].dat
 }
 
-// NewEpochUTC builds an Epoch from a UTC Gregorian civil date (GMAT
-// DateFormat=UTCGregorian). Valid for years 1972-2099 (Vallado Alg. 14 date
-// range intersected with the leap second table).
-func NewEpochUTC(year int, month time.Month, day, hour, min int, sec float64) (Epoch, error) {
-	if year < 1972 || year > 2099 || month < 1 || month > 12 ||
-		day < 1 || day > 31 || hour < 0 || hour > 23 || min < 0 || min > 59 ||
-		sec < 0 || sec >= 61 || math.IsNaN(sec) {
-		return Epoch{}, fmt.Errorf("invalid UTC date %d-%d-%d %d:%d:%g (years 1972-2099 supported)", year, month, day, hour, min, sec)
-	}
-	// Whole julian day number per Vallado Alg. 14 in exact integer arithmetic;
-	// jdInt + 0.5 is the julian date of the civil date's midnight.
-	y, m := year, int(month)
-	jdInt := 367*y - 7*(y+(m+9)/12)/4 + 275*m/9 + day + 1721013
-	// Seconds from J2000 noon to the civil date's midnight (jdInt+0.5−2451545 days), exactly.
-	secsUTC := float64(jdInt-2451545)*secsPerDay + secsPerDay/2
-	secsUTC += float64(hour*3600+min*60) + sec
-	mjdUTC := float64(jdInt) + 0.5 - 2400000.5 // time of day irrelevant at table resolution
-	return Epoch{secsTT: secsUTC + deltaAT(mjdUTC) + ttMinusTAI}, nil
+var j2000UTCNoon = time.Date(2000, time.January, 1, 12, 0, 0, 0, time.UTC)
+
+// J2000UTCNoon is the J2000 reference instant expressed on the UTC civil clock
+// (a uniform 86400 s/day count, no leap seconds). Counting Go time.Duration from
+// here and then adding deltaAT + ttMinusTAI yields seconds since J2000.0 TT.
+func J2000UTCNoon() time.Time {
+	return j2000UTCNoon
 }
 
-// ParseEpochUTC parses GMAT's UTCGregorian format, e.g. "12 Nov 2026 21:36:00.000".
-func ParseEpochUTC(s string) (Epoch, error) {
-	var (
-		day, year, hour, min int
-		monStr               string
-		sec                  float64
-	)
-	n, err := fmt.Sscanf(strings.TrimSpace(s), "%d %3s %d %d:%d:%f", &day, &monStr, &year, &hour, &min, &sec)
-	if err != nil || n != 6 {
-		return Epoch{}, fmt.Errorf("cannot parse UTCGregorian epoch %q: want \"DD Mon YYYY HH:MM:SS.sss\"", s)
-	}
-	mon := monthFromName(monStr)
-	if mon == 0 {
-		return Epoch{}, fmt.Errorf("cannot parse UTCGregorian epoch %q: unknown month %q", s, monStr)
-	}
-	return NewEpochUTC(year, mon, day, hour, min, sec)
-}
-
-var monthNames = [12]string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
-
-func monthFromName(s string) time.Month {
-	for i, name := range monthNames {
-		if strings.EqualFold(s, name) {
-			return time.Month(i + 1)
-		}
-	}
-	return 0
+// EpochFromTime builds an Epoch from a time.Time, interpreting it as a UTC
+// civil instant. Any location is normalized to UTC and the monotonic clock
+// reading, if present, is irrelevant (the civil/wall-clock value is used).
+//
+// time.Time follows the Unix convention of 86400 s/day and cannot represent a
+// leap second (no 23:59:60); the leap-second bridge to TAI/TT lives here via the
+// deltaAT table. The result is therefore exact except at a leap second instant,
+// where the time.Time input is itself ill-defined.
+func EpochFromTime(t time.Time) Epoch {
+	u := t.UTC()
+	// Uniform (leap-second-free) UTC seconds from the J2000 civil reference.
+	secsUTC := u.Sub(j2000UTCNoon).Seconds()
+	mjdUTC := jdJ2000 + secsUTC/secsPerDay - 2400000.5 // table resolution insensitive to time of day
+	return Epoch{secsTT: secsUTC + deltaAT(mjdUTC) + ttMinusTAI}
 }
 
 // EpochFromTT builds an Epoch directly from seconds elapsed since J2000.0 TT.
@@ -144,32 +118,17 @@ func (e Epoch) Add(seconds float64) Epoch { return Epoch{secsTT: e.secsTT + seco
 // Sub returns e − o in seconds.
 func (e Epoch) Sub(o Epoch) float64 { return e.secsTT - o.secsTT }
 
-// String formats the epoch as GMAT UTCGregorian, e.g. "12 Nov 2026 21:36:00.000",
-// with millisecond resolution.
-func (e Epoch) String() string {
-	// Round to milliseconds first so 59.9996 s carries into the next minute.
-	ms := math.Round(e.secsUTC() * 1000)
-	jdUTC := jdJ2000 + ms/1000/secsPerDay
-	// Civil date from julian day number (Fliegel & Van Flandern; Vallado Alg. 22 equivalent).
-	jdn := int64(math.Floor(jdUTC + 0.5))
-	tod := jdUTC + 0.5 - float64(jdn) // [days] since midnight
-	l := jdn + 68569
-	n := 4 * l / 146097
-	l -= (146097*n + 3) / 4
-	yy := 4000 * (l + 1) / 1461001
-	l -= 1461*yy/4 - 31
-	mm := 80 * l / 2447
-	day := l - 2447*mm/80
-	l = mm / 11
-	month := mm + 2 - 12*l
-	year := 100*(n-49) + yy + l
-
-	todMS := int64(math.Round(tod * secsPerDay * 1000))
-	if todMS >= secsPerDay*1000 {
-		todMS = secsPerDay*1000 - 1 // guard float roundoff at midnight
-	}
-	hour := todMS / 3600000
-	min := todMS / 60000 % 60
-	sec := float64(todMS%60000) / 1000
-	return fmt.Sprintf("%02d %s %d %02d:%02d:%06.3f", day, monthNames[month-1], year, hour, min, sec)
+// Time returns the epoch as a UTC time.Time, the inverse of EpochFromTime.
+// The conversion goes through the UTC scale (TT − ttMinusTAI − ΔAT) using the
+// same leap-second handling as EpochFromTime, so it is exact away from a leap second.
+// Two caveats are inherent to time.Time: an instant on a leap second maps to the
+// following second (no 23:59:60), and sub-microsecond detail below float64's
+// ~0.1 µs resolution near year 2030 is not recoverable.
+func (e Epoch) Time() time.Time {
+	secsUTC := e.secsUTC()
+	// Split whole/fractional seconds so the large integer part stays exact and
+	// only the sub-second remainder is rounded to time.Time's ns granularity.
+	whole, frac := math.Modf(secsUTC)
+	d := time.Duration(int64(whole))*time.Second + time.Duration(math.Round(frac*1e9))*time.Nanosecond
+	return j2000UTCNoon.Add(d)
 }

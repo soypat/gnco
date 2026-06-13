@@ -15,7 +15,8 @@ import (
 // enables a spherical-harmonic field.
 type ForceModel struct {
 	central   *cosmos.Body
-	harmonics *cosmos.Harmonics // nil → point-mass central body
+	harmonics *cosmos.Harmonics        // nil → point-mass central body
+	oriCache  *cosmos.OrientationCache // nil → recompute orientation every call
 }
 
 // NewForceModel creates a force model with point-mass gravity of the central body.
@@ -32,11 +33,25 @@ func NewForceModel(central *cosmos.Body) *ForceModel {
 // potential file's mu (GMAT GravityField behavior).
 func (fm *ForceModel) SetHarmonics(h *cosmos.Harmonics) { fm.harmonics = h }
 
+// SetNutationInterval enables GMAT-style caching of the Earth orientation
+// reduction: the nutation/precession matrix is re-evaluated only every
+// intervalSec seconds of propagation time (GMAT's Nutation Update Interval,
+// default 60 s), while the fast sidereal rotation is still applied every call.
+// intervalSec <= 0 disables caching (recompute every call). When enabled, use one
+// ForceModel per goroutine. Recommended: 60.
+func (fm *ForceModel) SetNutationInterval(intervalSec float64) {
+	if intervalSec <= 0 {
+		fm.oriCache = nil
+		return
+	}
+	fm.oriCache = cosmos.NewOrientationCache(intervalSec)
+}
+
 // Accel returns the total acceleration [m/s²] on an orbiting point mass at
 // inertial (MJ2000Eq) position sBI [m] at absolute epoch e.
 func (fm *ForceModel) Accel(e cosmos.Epoch, sBI md3.Vec) md3.Vec {
 	if fm.harmonics != nil {
-		TEI := fm.central.TEI(e)
+		TEI := fm.central.TEICached(fm.oriCache, e)
 		sBF := md3.MulMatVec(TEI, sBI)
 		aBF := fm.harmonics.AccelBodyFixed(sBF)
 		return md3.MulMatVecTrans(TEI, aBF)

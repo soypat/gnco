@@ -3,6 +3,8 @@
 package cosmos
 
 import (
+	"math"
+
 	"github.com/soypat/geometry/md3"
 )
 
@@ -104,6 +106,25 @@ func (b *Body) TEI(e Epoch) md3.Mat3 {
 	prec := precessionMOD(tTT)
 	dPsi, dEps, epsBar := nutation1980Angles(tTT)
 	nut := md3.MulMat3(rot1(-(epsBar + dEps)), md3.MulMat3(rot3(-dPsi), rot1(epsBar)))
+	return b.teiFromCached(e, md3.MulMat3(nut, prec), dPsi, epsBar)
+}
+
+// TEICached behaves like TEI but reuses the cached nutation/precession reduction
+// from c when the epoch is within c's update interval. A nil cache falls back to
+// recomputing every call (identical to TEI).
+func (b *Body) TEICached(c *OrientationCache, e Epoch) md3.Mat3 {
+	if c == nil {
+		return b.TEI(e)
+	}
+	if !c.valid || math.Abs(e.secsTT-c.lastSecsTT) >= c.intervalSec {
+		c.refresh(e.secsTT)
+	}
+	return b.teiFromCached(e, c.m, c.dPsi, c.epsBar)
+}
+
+// teiFromCached assembles TEI from a pre-built nutation·precession matrix m and
+// the nutation angles GAST needs, applying the per-call sidereal rotation.
+func (b *Body) teiFromCached(e Epoch, m md3.Mat3, dPsi, epsBar float64) md3.Mat3 {
 	gast := e.gastFromNutation(dPsi, epsBar)
-	return md3.MulMat3(rot3(gast+b.celestialLong), md3.MulMat3(nut, prec))
+	return md3.MulMat3(rot3(gast+b.celestialLong), m)
 }
