@@ -8,7 +8,6 @@ import (
 
 	"github.com/soypat/geometry/md1"
 	"github.com/soypat/geometry/md3"
-	"github.com/soypat/geometry/ms3"
 	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/orbits"
 )
@@ -105,19 +104,18 @@ func (t *Trajectory) Span() float64 {
 	return t.Samples[len(t.Samples)-1].T.Sub(t.Samples[0].T)
 }
 
-// catmullRom is the interpolating cubic used by PositionAt.
-var catmullRom = ms3.SplineCatmullRom()
-
-// PositionAt returns the inertial position interpolated to absolute epoch e
-// with a Catmull-Rom spline through the surrounding samples, and reports
-// whether e lies within the trajectory span.
+// PositionAt returns the inertial position interpolated to absolute epoch e with
+// a cubic Hermite through the two bracketing samples, using their stored
+// velocities as the tangents, and reports whether e lies within the trajectory
+// span. The integrated velocity is the exact tangent, so this resolves a
+// boundary far more accurately than a position-only spline whose tangents are
+// estimated by finite differences of neighbouring samples.
 //
 // Interpolation is physical only when the sampling step resolves the orbit
 // (samples spaced well under the period); on a coarse survey trajectory whose
-// step exceeds the period the spline is not a meaningful orbit and the result
-// must not be trusted. Positions are interpolated as offsets from the left
-// bracketing sample so the float32 spline keeps sub-metre precision at the
-// large absolute coordinates of an inertial frame.
+// step exceeds the period the result must not be trusted. The blend is evaluated
+// in float64 about the left bracketing sample so the large absolute coordinates
+// of an inertial frame never enter the interpolation and precision is sub-metre.
 func (t *Trajectory) PositionAt(e cosmos.Epoch) (md3.Vec, bool) {
 	n := len(t.Samples)
 	switch n {
@@ -135,39 +133,27 @@ func (t *Trajectory) PositionAt(e cosmos.Epoch) (md3.Vec, bool) {
 	i, found := slices.BinarySearchFunc(t.Samples, te, func(s State, target float64) int {
 		return cmp.Compare(s.T.Sub(t.Samples[0].T), target)
 	})
-	if !found {
+	if found {
+		return t.Samples[i].R, true
+	} else if i > 0 {
 		i-- // BinarySearchFunc returns the first sample after e; step back to it
 	}
-	if i < 0 {
-		i = 0
+	a, b := t.Samples[i], t.Samples[i+1]
+	h := b.T.Sub(a.T)
+	if h <= 0 {
+		return a.R, true
 	}
-	if i >= n-1 {
-		return t.Samples[n-1].R, true
-	}
-	dt := t.Samples[i+1].T.Sub(t.Samples[i].T)
-	u := float32(0)
-	if dt > 0 {
-		u = float32(e.Sub(t.Samples[i].T) / dt)
-	}
-	origin := t.Samples[i].R
-	// Phantom control points outside the array are linearly extrapolated rather
-	// than duplicated, which gives the Catmull-Rom end segments usable tangents.
-	sampleR := func(k int) md3.Vec {
-		switch {
-		case k < 0:
-			return md3.Sub(md3.Scale(2, t.Samples[0].R), t.Samples[1].R)
-		case k >= n:
-			return md3.Sub(md3.Scale(2, t.Samples[n-1].R), t.Samples[n-2].R)
-		default:
-			return t.Samples[k].R
-		}
-	}
-	off := func(k int) ms3.Vec {
-		d := md3.Sub(sampleR(k), origin)
-		return ms3.Vec{X: float32(d.X), Y: float32(d.Y), Z: float32(d.Z)}
-	}
-	r := catmullRom.Evaluate(u, off(i-1), off(i), off(i+1), off(i+2))
-	return md3.Add(origin, md3.Vec{X: float64(r.X), Y: float64(r.Y), Z: float64(r.Z)}), true
+	s := e.Sub(a.T) / h
+	s2, s3 := s*s, s*s*s
+	// Hermite basis (h00 r0 + h10 h v0 + h01 r1 + h11 h v1), rearranged about r0
+	// (h00+h01 = 1) so only the inter-sample offset and velocity terms are blended.
+	h10 := s3 - 2*s2 + s
+	h01 := -2*s3 + 3*s2
+	h11 := s3 - s2
+	p := md3.Add(a.R, md3.Scale(h01, md3.Sub(b.R, a.R)))
+	p = md3.Add(p, md3.Scale(h*h10, a.V))
+	p = md3.Add(p, md3.Scale(h*h11, b.V))
+	return p, true
 }
 
 // AttitudeFunc supplies the body→inertial attitude during trajectory
