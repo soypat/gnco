@@ -11,6 +11,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
 	"github.com/soypat/gnco/orbits"
+	"github.com/soypat/gnco/physics"
 )
 
 func main() {
@@ -70,8 +72,12 @@ func run() error {
 
 	fmt.Printf("%-8s  %-12s  %-12s  %-12s  %-12s\n", "t [h]", "radius [km]", "speed [m/s]", "rk45 |ΔE/E₀|", "rk1210 |ΔE/E₀|")
 	fmt.Println("--------  ------------  ------------  ------------  -----------")
-	integrator := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
-	integratorFast := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
+	var integrator, integratorFast physics.PointIntegrator
+	err1 := integrator.Configure(&coords, 0, SBI0, VBI0)
+	err2 := integratorFast.Configure(&coords, 0, SBI0, VBI0)
+	if err1 != nil || err2 != nil {
+		return errors.Join(err1, err2)
+	}
 	t, SBI, VBI := integrator.State()
 	SBIfast, VBIfast := SBI, VBI // copy for fast integration comparison.
 	tfast := t

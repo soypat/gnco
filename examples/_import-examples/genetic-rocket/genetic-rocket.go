@@ -29,6 +29,7 @@ type GeneticRocket struct {
 }
 
 func (gr *GeneticRocket) Simulate(ctx context.Context) (fitness float64) {
+
 	return
 }
 

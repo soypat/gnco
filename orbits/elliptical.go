@@ -48,7 +48,7 @@ func NewElliptical(ra, rp float64) (Elliptical, error) {
 //	maxHeight := o.Apoapsis() - world.Radius
 func (o Elliptical) Apoapsis() float64 { return o.ra }
 
-// Apoapsis returns the minimum distance from earth o reaches. [m]
+// Periapsis returns the minimum distance from earth o reaches. [m]
 // To calculate minimum orbit height:
 //
 //	minHeight := o.Periapsis() - world.Radius
@@ -161,6 +161,9 @@ func (o Elliptical) AngularMomentum(gravParam float64) float64 {
 	return math.Sqrt(gravParam * o.Periapsis() * (1 + o.Eccentricity()))
 }
 
+// SpecificEnergy returns the specific orbital energy, the total energy (kinetic plus
+// potential) per unit mass of the orbiting body given the gravitational parameter of
+// the world. It is constant along the orbit and negative for bound elliptical orbits. [J/kg]
 func (o Elliptical) SpecificEnergy(gravParam float64) float64 {
 	return -gravParam / (2 * o.a()) // Eqn (2.80). See also Eqn (2.60)
 }

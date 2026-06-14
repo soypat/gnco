@@ -7,6 +7,7 @@ import (
 
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/physics"
 )
 
 func main() {
@@ -47,7 +48,11 @@ func run() error {
 	// For the simplicity of the example there is no external/internal force other than gravity
 	// so we can omit force/mass calculations.
 	projectileCoords := buenosAires // projectileCoords will store coordinates of our projectile over course of simulation.
-	integrator := gnco.NewPhysicsPointIntegrator(&projectileCoords, t0, SBI0, VBI0)
+	var integrator physics.PointIntegrator
+	err := integrator.Configure(&projectileCoords, t0, SBI0, VBI0)
+	if err != nil {
+		return err
+	}
 	dt := 0.0001
 	t := t0
 	wantTime := parabolicTimeOfFlight(initialVelocity, projectileAngleRad, md3.Norm(buenosAires.AGravG()))

@@ -7,6 +7,7 @@ import (
 
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/physics"
 )
 
 func main() {
@@ -65,8 +66,11 @@ func run() error {
 
 	// coords tracks the rocket position; the integrator updates it at every RKN stage.
 	coords := launchSite
-	integrator := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
-
+	var integrator physics.PointIntegrator
+	err := integrator.Configure(&coords, 0, SBI0, VBI0)
+	if err != nil {
+		return err
+	}
 	mass := massWet
 	massFlow := (massWet - massDry) / burnTime
 

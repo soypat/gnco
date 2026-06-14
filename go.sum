@@ -1,2 +1,4 @@
 github.com/soypat/geometry v0.0.0-20260614155241-3c371d4bfccd h1:hYTxhheRKQR8W/otp/0eEPI6/bOBRayDoniWjTE8Z7g=
 github.com/soypat/geometry v0.0.0-20260614155241-3c371d4bfccd/go.mod h1:8sjIu2Uy3XSHX8MxxCENgMmActBY3KnZa5+c71Gvxp4=
+github.com/soypat/geometry v0.0.0-20260614213923-371953e1cce4 h1:CMaO3DsAkbu/BRKiWgQq2s4U6C6DM2Rdp1yWnTC7CcQ=
+github.com/soypat/geometry v0.0.0-20260614213923-371953e1cce4/go.mod h1:8sjIu2Uy3XSHX8MxxCENgMmActBY3KnZa5+c71Gvxp4=

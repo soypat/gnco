@@ -1,61 +1,62 @@
-package gnco
+package physics
 
 import (
 	"github.com/soypat/geometry/md3"
-	"github.com/soypat/gnco/internal/ode"
+	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/physics/ode"
 )
 
-// PhysicsPointIntegrator integrates a point mass with inertial kinematics.
+// PointIntegrator integrates a point mass with inertial kinematics.
 // External acceleration is provided in the geographic frame without gravity.
-type PhysicsPointIntegrator struct {
+type PointIntegrator struct {
 	integrator        ode.RKN1210
 	integratorFast    ode.RK45
-	coord             Coordinates
+	coord             gnco.Coordinates
 	lastInternalAccel md3.Vec
 	lastStepWasFast   bool
 }
 
-// NewPhysicsPointIntegrator creates and initializes a physics integrator.
+// Configure initializes the integrator before use.
 // coord provides the coordinate system, t0 is the initial time, SBI0 is the initial
 // position in inertial frame, and VBI0 is the initial velocity in inertial frame.
-func NewPhysicsPointIntegrator(coord Coordinates, t0 float64, SBI0, VBI0 md3.Vec) *PhysicsPointIntegrator {
-	p := &PhysicsPointIntegrator{
+func (pi *PointIntegrator) Configure(coord gnco.Coordinates, t0 float64, SBI0, VBI0 md3.Vec) error {
+	*pi = PointIntegrator{
 		coord: coord,
 	}
-	err := p.integrator.Configure(ode.DefaultRelaxFactor, ode.DefaultPreconditioner, ode.Parameters{
+	err := pi.integrator.Configure(ode.DefaultRelaxFactor, ode.DefaultPreconditioner, ode.Parameters{
 		AbsTolerance: 0,
 		MinStep:      0,
 		MaxStep:      0,
 	})
 	if err != nil {
-		panic(err)
+		return err
 	}
-	err = p.integratorFast.Configure(ode.Parameters{
+	err = pi.integratorFast.Configure(ode.Parameters{
 		AbsTolerance: 0,
 		MinStep:      0,
 		MaxStep:      0,
 	})
 	if err != nil {
-		panic(err)
+		return err
 	}
-	p.integrator.Init(ode.IVP2{
+	pi.integrator.Init(ode.IVP2{
 		T0:   t0,
 		Y0:   []float64{SBI0.X, SBI0.Y, SBI0.Z},
 		DY0:  []float64{VBI0.X, VBI0.Y, VBI0.Z},
-		Func: p.accelRK12,
+		Func: pi.accelRK12,
 	})
-	return p
+	return nil
 }
 
 // State returns the current time, inertial position and velocity.
-func (phys *PhysicsPointIntegrator) State() (t float64, SBI, VBI md3.Vec) {
+func (phys *PointIntegrator) State() (t float64, SBI, VBI md3.Vec) {
 	t, y, dy := phys.integrator.State()
 	return t, md3.Vec{X: y[0], Y: y[1], Z: y[2]}, md3.Vec{X: dy[0], Y: dy[1], Z: dy[2]}
 }
 
 // Step advances the integrator by dt using external geographic-frame acceleration.
 // The supplied acceleration must exclude gravity; gravity is computed internally.
-func (phys *PhysicsPointIntegrator) Step(dt float64, externalAccelGeographicFrameNoGravity md3.Vec) (t float64, SBI, VBI md3.Vec) {
+func (phys *PointIntegrator) Step(dt float64, externalAccelGeographicFrameNoGravity md3.Vec) (t float64, SBI, VBI md3.Vec) {
 	phys.lastInternalAccel = externalAccelGeographicFrameNoGravity
 	if phys.lastStepWasFast {
 		tNow, y := phys.integratorFast.State()
@@ -72,7 +73,7 @@ func (phys *PhysicsPointIntegrator) Step(dt float64, externalAccelGeographicFram
 // StepFast advances the integrator by dt using RK45 instead of RKN1210.
 // It avoids the overhead of the high-order method for situations where
 // lower accuracy is acceptable. Gravity is still computed per stage.
-func (phys *PhysicsPointIntegrator) StepFast(dt float64, externalAccelGeographicFrameNoGravity md3.Vec) (t float64, SBI, VBI md3.Vec) {
+func (phys *PointIntegrator) StepFast(dt float64, externalAccelGeographicFrameNoGravity md3.Vec) (t float64, SBI, VBI md3.Vec) {
 	phys.lastInternalAccel = externalAccelGeographicFrameNoGravity
 	if !phys.lastStepWasFast {
 		tNow, sbi, vbi := phys.integrator.State()
@@ -90,7 +91,7 @@ func (phys *PhysicsPointIntegrator) StepFast(dt float64, externalAccelGeographic
 		md3.Vec{X: y[3], Y: y[4], Z: y[5]}
 }
 
-func (phys *PhysicsPointIntegrator) accelRK12(yppDst, y []float64, t float64) {
+func (phys *PointIntegrator) accelRK12(yppDst, y []float64, t float64) {
 	SBII := md3.Vec{X: y[0], Y: y[1], Z: y[2]}
 	ABII := phys.accelMain(SBII, t)
 	yppDst[0], yppDst[1], yppDst[2] = ABII.X, ABII.Y, ABII.Z
@@ -98,7 +99,7 @@ func (phys *PhysicsPointIntegrator) accelRK12(yppDst, y []float64, t float64) {
 
 // accelFast is the rates function for integratorFast.
 // State y = [x, y, z, vx, vy, vz]; dst = [vx, vy, vz, ax, ay, az].
-func (phys *PhysicsPointIntegrator) accelFast(dst, y []float64, t float64) {
+func (phys *PointIntegrator) accelFast(dst, y []float64, t float64) {
 	SBII := md3.Vec{X: y[0], Y: y[1], Z: y[2]}
 	vel := md3.Vec{X: y[3], Y: y[4], Z: y[5]}
 	ABII := phys.accelMain(SBII, t)
@@ -106,7 +107,7 @@ func (phys *PhysicsPointIntegrator) accelFast(dst, y []float64, t float64) {
 	dst[3], dst[4], dst[5] = ABII.X, ABII.Y, ABII.Z
 }
 
-func (phys *PhysicsPointIntegrator) accelMain(sbi md3.Vec, t float64) (abi md3.Vec) {
+func (phys *PointIntegrator) accelMain(sbi md3.Vec, t float64) (abi md3.Vec) {
 	coord := phys.coord
 	w := coord.World()
 	TEI := w.TEI(t)
@@ -121,4 +122,17 @@ func (phys *PhysicsPointIntegrator) accelMain(sbi md3.Vec, t float64) (abi md3.V
 	abi = md3.Add(phys.lastInternalAccel, accelGravity)
 	abi = md3.MulMatVecTrans(TGI, abi)
 	return abi
+}
+
+// gravInertial returns the gravitational acceleration in the inertial frame at
+// inertial position sbi and time t, using coord's gravity model. coord is
+// stateful: SetFromEarthFixedCoords mutates it, so callers must invoke this
+// sequentially (one ODE stage at a time), as accelMain already does.
+func gravInertial(coord gnco.Coordinates, sbi md3.Vec, t float64) md3.Vec {
+	w := coord.World()
+	TEI := w.TEI(t)
+	coord.SetFromEarthFixedCoords(sbi, t)
+	// TM of geographic wrt inertial coordinates.
+	TGI := md3.MulMat3(coord.TGE(), TEI)
+	return md3.MulMatVecTrans(TGI, coord.AGravG())
 }

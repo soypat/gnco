@@ -6,7 +6,7 @@ import (
 
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco/cosmos"
-	"github.com/soypat/gnco/internal/ode"
+	"github.com/soypat/gnco/physics/ode"
 )
 
 // ForceModel accumulates the accelerations acting on an orbiting point mass,
