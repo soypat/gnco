@@ -28,6 +28,7 @@ import (
 	"github.com/soypat/gnco"
 	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/orbits"
+	"github.com/soypat/gnco/physics"
 )
 
 var (
@@ -178,7 +179,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	cfg := gnco.PropagatorConfig{Accuracy: 1e-12, MinStep: 0.001, MaxStep: 2700, InitialStep: 60}
+	cfg := physics.PropagatorConfig{Accuracy: 1e-12, MinStep: 0.001, MaxStep: 2700, InitialStep: 60}
 	r0, v0 := k.RV(mu, kepOrbitTA)
 
 	// Coarse propagation over the whole span (used to scan for the worst case).
@@ -244,7 +245,7 @@ type caseResult struct {
 
 // analyzePeriod re-propagates one orbital period from start state ws at the fine
 // step and computes per-face Lab/BOL energies and mean power over it.
-func analyzePeriod(ws gnco.State, period float64, earth *cosmos.Body, jgm2 *cosmos.Harmonics, cfg gnco.PropagatorConfig, sat Satellite, sun cosmos.Ephemeris, pmpLab, pmpBOL float64) (caseResult, error) {
+func analyzePeriod(ws gnco.State, period float64, earth *cosmos.Body, jgm2 *cosmos.Harmonics, cfg physics.PropagatorConfig, sat Satellite, sun cosmos.Ephemeris, pmpLab, pmpBOL float64) (caseResult, error) {
 	prop, err := newProp(earth, jgm2, ws.T, ws.R, ws.V, cfg)
 	if err != nil {
 		return caseResult{}, err
@@ -291,11 +292,11 @@ func writeSeriesFile(path string, traj *gnco.Trajectory, sun cosmos.Ephemeris, s
 
 // newProp builds a fresh force model (JGM2 4×4 with the nutation cache) and
 // propagator anchored at epoch with state r, v.
-func newProp(earth *cosmos.Body, jgm2 *cosmos.Harmonics, epoch cosmos.Epoch, r, v md3.Vec, cfg gnco.PropagatorConfig) (*gnco.OrbitPropagator, error) {
-	fm := gnco.NewForceModel(earth)
+func newProp(earth *cosmos.Body, jgm2 *cosmos.Harmonics, epoch cosmos.Epoch, r, v md3.Vec, cfg physics.PropagatorConfig) (*physics.OrbitPropagator, error) {
+	fm := physics.NewForceModel(earth)
 	fm.SetHarmonics(jgm2)
 	fm.SetNutationInterval(120)
-	return gnco.NewOrbitPropagator(fm, epoch, r, v, cfg)
+	return physics.NewOrbitPropagator(fm, epoch, r, v, cfg)
 }
 
 // worstCasePeriod returns the index of the coarse sample that starts the

@@ -162,11 +162,21 @@ func (t *Trajectory) PositionAt(e cosmos.Epoch) (md3.Vec, bool) {
 // externally propagated kinematic attitude.
 type AttitudeFunc func(e cosmos.Epoch, r, v md3.Vec) md3.Quat
 
+// Propagator advances an orbiting state in time. It is satisfied by
+// *physics.OrbitPropagator; the interface keeps Propagate decoupled from the
+// physics package (which imports this one) so no import cycle forms.
+type Propagator interface {
+	// State returns the current absolute epoch and inertial position and velocity.
+	State() (cosmos.Epoch, md3.Vec, md3.Vec)
+	// Step advances by dt seconds and returns the new state.
+	Step(dt float64) (cosmos.Epoch, md3.Vec, md3.Vec, error)
+}
+
 // Propagate runs p forward over duration seconds, sampling every step seconds
 // (the initial state is the first sample), and returns the resulting
 // Trajectory. Attitude for each sample comes from att; pass nil for identity.
 // On a propagation error the partial trajectory and the error are returned.
-func Propagate(p *OrbitPropagator, step, duration float64, att AttitudeFunc) (*Trajectory, error) {
+func Propagate(p Propagator, step, duration float64, att AttitudeFunc) (*Trajectory, error) {
 	if step <= 0 || duration <= 0 || math.IsNaN(step) || math.IsNaN(duration) {
 		return nil, fmt.Errorf("bad step %g or duration %g", step, duration)
 	}

@@ -1,4 +1,4 @@
-package gnco
+package physics
 
 import (
 	"fmt"
@@ -76,12 +76,24 @@ type PropagatorConfig struct {
 
 // OrbitPropagator integrates an orbiting point-mass state under a ForceModel
 // in the central body's MJ2000Eq inertial frame, anchored to an absolute
-// epoch. Wraps the RKN12(10) integrator with GMAT-like adaptive stepping.
+// epoch. Wraps a PointIntegrator (RKN12(10) plus an RK45 fast path) with
+// GMAT-like adaptive stepping.
 type OrbitPropagator struct {
 	fm     *ForceModel
 	epoch0 cosmos.Epoch
-	integ  ode.RKN1210
+	integ  PointIntegrator
 	hNext  float64 // suggested next internal step [s]
+}
+
+// forceModelSource adapts a ForceModel anchored at epoch0 into an AccelSource:
+// integration time t maps to absolute epoch epoch0+t, evaluated per stage.
+type forceModelSource struct {
+	fm     *ForceModel
+	epoch0 cosmos.Epoch
+}
+
+func (s forceModelSource) AccelInertial(t float64, sbi md3.Vec) md3.Vec {
+	return s.fm.Accel(s.epoch0.Add(t), sbi)
 }
 
 // NewOrbitPropagator creates a propagator with initial inertial position
@@ -99,11 +111,11 @@ func NewOrbitPropagator(fm *ForceModel, epoch0 cosmos.Epoch, rBI, vBI md3.Vec, c
 		fm:     fm,
 		epoch0: epoch0,
 	}
-	err := p.integ.Configure(ode.DefaultRelaxFactor, ode.DefaultPreconditioner, ode.Parameters{
+	err := p.integ.ConfigureSource(forceModelSource{fm: fm, epoch0: epoch0}.AccelInertial, ode.Parameters{
 		RelTolerance: cfg.Accuracy,
 		MinStep:      cfg.MinStep,
 		MaxStep:      cfg.MaxStep,
-	})
+	}, 0, rBI, vBI)
 	if err != nil {
 		return nil, err
 	}
@@ -111,26 +123,14 @@ func NewOrbitPropagator(fm *ForceModel, epoch0 cosmos.Epoch, rBI, vBI md3.Vec, c
 	if p.hNext <= 0 {
 		p.hNext = cfg.MaxStep
 	}
-	p.integ.Init(ode.IVP2{
-		T0:   0,
-		Y0:   []float64{rBI.X, rBI.Y, rBI.Z},
-		DY0:  []float64{vBI.X, vBI.Y, vBI.Z},
-		Func: p.accel,
-	})
 	return p, nil
-}
-
-// accel is the ODE right-hand side: y” = Accel(epoch0+t, y).
-func (p *OrbitPropagator) accel(yppDst, y []float64, t float64) {
-	a := p.fm.Accel(p.epoch0.Add(t), md3.Vec{X: y[0], Y: y[1], Z: y[2]})
-	yppDst[0], yppDst[1], yppDst[2] = a.X, a.Y, a.Z
 }
 
 // State returns the current absolute epoch and inertial position [m] and
 // velocity [m/s].
 func (p *OrbitPropagator) State() (e cosmos.Epoch, r, v md3.Vec) {
-	t, rs, vs := p.integ.State()
-	return p.epoch0.Add(t), md3.Vec{X: rs[0], Y: rs[1], Z: rs[2]}, md3.Vec{X: vs[0], Y: vs[1], Z: vs[2]}
+	t, r, v := p.integ.State()
+	return p.epoch0.Add(t), r, v
 }
 
 // Elapsed returns seconds integrated since the initial epoch.
@@ -160,7 +160,7 @@ func (p *OrbitPropagator) Step(dt float64) (e cosmos.Epoch, r, v md3.Vec, err er
 		if h <= 0 {
 			h = remaining
 		}
-		hSuggest, err := p.integ.Step(h)
+		hSuggest, err := p.integ.StepRKN(h)
 		if err != nil {
 			e, r, v = p.State()
 			return e, r, v, err

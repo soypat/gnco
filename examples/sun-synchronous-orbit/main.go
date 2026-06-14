@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/soypat/geometry/md3"
-	"github.com/soypat/gnco"
 	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/orbits"
+	"github.com/soypat/gnco/physics"
 )
 
 const missionstart = "12 Nov 2026 21:36:00.000"
@@ -52,10 +52,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	fm := gnco.NewForceModel(earth)
+	fm := physics.NewForceModel(earth)
 	fm.SetHarmonics(jgm2)
 	r, v := k.RV(earth.Mu(), 118.33*deg)
-	prop, err := gnco.NewOrbitPropagator(fm, epoch0, r, v, gnco.PropagatorConfig{
+	prop, err := physics.NewOrbitPropagator(fm, epoch0, r, v, physics.PropagatorConfig{
 		Accuracy: 1e-12, MinStep: 0.001, MaxStep: 2700,
 	})
 	if err != nil {
