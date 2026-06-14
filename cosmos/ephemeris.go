@@ -64,6 +64,9 @@ func (*AnalyticSun) Position(e Epoch) md3.Vec {
 	return md3.MulMatVecTrans(precessionMOD(tTT), rMOD)
 }
 
+// Radius returns Sun equatorial radius [m].
+func (*AnalyticSun) Radius() float64 { return 695990e3 }
+
 // Shadow returns the angular eclipse margins [rad] of a point at inertial
 // position posBI [m] occulted by the central body (oblate spheroid of
 // equatorial radius occRadius [m] and flattening occFlattening, pole along

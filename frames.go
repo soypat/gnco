@@ -106,7 +106,7 @@ func (F Frame) ToBody(v Orientation, frameVec md3.Vec) md3.Vec {
 //	TVG * v_G = v_V; transpose(TVG) converts V to G.
 //
 // The V-frame x-axis aligns with velocity. Near-vertical motion uses north as azimuth.
-func TVGFromGeographicVelocity(vbg md3.Vec) md3.Mat3 {
+func TVGFromGeographicVelocity(vbg md3.Vec) (TVG md3.Mat3) {
 	vnorm := md3.Norm(vbg)
 	if vnorm == 0 {
 		return md3.IdentityMat3()
