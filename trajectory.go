@@ -1,10 +1,12 @@
 package gnco
 
 import (
+	"cmp"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 
+	"github.com/soypat/geometry/md1"
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/geometry/ms3"
 	"github.com/soypat/gnco/cosmos"
@@ -24,17 +26,63 @@ type State struct {
 	Att md3.Quat     // body→inertial attitude (rotates a body-frame vector to inertial)
 }
 
-// EulerAngles returns the 3-2-1 (yaw e1 about Z, pitch e2 about Y, roll e3
-// about X) intrinsic Euler angles [rad] of the stored attitude, the sequence
+// QuatToEulerAngles returns the 3-2-1 (yaw e1 about Z, pitch e2 about Y, roll e3
+// about X) intrinsic Euler angles [rad] of a attitude quaternion, the sequence
 // GMAT reports by default as EulerAngle1..3. Validate the sequence against the
 // GMAT attitude configuration before relying on it for a strict comparison.
-func (s State) EulerAngles() (e1, e2, e3 float64) {
-	q := s.Att
+func QuatToEulerAngles(q md3.Quat) (e1, e2, e3 float64) {
 	// Tait-Bryan ZYX from a unit quaternion (q rotates body→inertial).
 	e3 = math.Atan2(2*(q.W*q.I+q.J*q.K), 1-2*(q.I*q.I+q.J*q.J)) // roll about X
 	e2 = math.Asin(clampUnit(2 * (q.W*q.J - q.K*q.I)))          // pitch about Y
 	e1 = math.Atan2(2*(q.W*q.K+q.I*q.J), 1-2*(q.J*q.J+q.K*q.K)) // yaw about Z
 	return e1, e2, e3
+}
+
+// AttNadirPointing returns the body→inertial attitude of a nadir-pointing
+// spacecraft in the GMAT NadirPointing convention SolarCalc uses: body +Z is
+// aligned with the nadir (toward the central body, −R̂), body +X with the
+// velocity direction as closely as the +Z lock allows (the Velocity attitude
+// constraint), and +Y completes the right-handed frame. It is derived from
+// position and velocity alone and is undefined for a purely radial velocity.
+func (s State) AttNadirPointing() md3.Quat {
+	zb := md3.Unit(md3.Scale(-1, s.R))                            // nadir: toward the central body centre
+	xb := md3.Unit(md3.Sub(s.V, md3.Scale(md3.Dot(s.V, zb), zb))) // velocity ⟂ nadir → body +X
+
+	// Align body +Z with the nadir, then roll about it to bring body +X onto xb.
+	align := md3.RotationBetweenVecs(md3.Vec{Z: 1}, zb)
+	x1 := align.Rotate(md3.Vec{X: 1}) // where body +X lands after the alignment
+	roll := math.Atan2(md3.Dot(zb, md3.Cross(x1, xb)), clampUnit(md3.Dot(x1, xb)))
+	// q1.Mul(q2) applies q2 then q1, so this rolls after aligning.
+	return md3.Rotation(roll, zb).Mul(align)
+}
+
+// OrbitElements returns the osculating Keplerian elements and true anomaly [rad] at
+// sample i, derived from position and velocity.
+func (s State) OrbitElements(mu float64) (orbits.Keplerian, float64, error) {
+	return orbits.KeplerianFromRV(mu, s.R, s.V)
+}
+
+// OrbitSemiMajorAxis returns the osculating semi-major axis [m] at sample from the
+// vis-viva relation, avoiding the full element solve.
+func (s State) OrbitSemiMajorAxis(mu float64) float64 {
+	r := md3.Norm(s.R)
+	v2 := md3.Dot(s.V, s.V)
+	return 1 / (2/r - v2/mu)
+}
+
+// OrbitPeriod returns the osculating orbital period [s] at sample i.
+func (s State) OrbitPeriod(mu float64) float64 {
+	a := s.OrbitSemiMajorAxis(mu)
+	return 2 * math.Pi * math.Sqrt(a*a*a/mu)
+}
+
+// OrbitBetaAngle returns the orbital beta angle [rad]: the elevation of
+// the Sun above the instantaneous orbit plane, sin(β) = ĥ·ŝ with ĥ the orbit
+// normal and ŝ the geocentric Sun direction.
+func (s State) OrbitBetaAngle(sun cosmos.Ephemeris) float64 {
+	h := md3.Unit(md3.Cross(s.R, s.V))
+	su := md3.Unit(sun.Position(s.T))
+	return math.Asin(clampUnit(md3.Dot(h, su)))
 }
 
 // Trajectory is the propagation output: an array of self-contained samples in
@@ -43,7 +91,6 @@ func (s State) EulerAngles() (e1, e2, e3 float64) {
 // only the raw integrated state; orbital elements, Sun geometry and panel
 // illumination are recovered through the methods below.
 type Trajectory struct {
-	Mu      float64 // central-body gravitational parameter [m³/s²], for element & period derivations
 	Samples []State
 }
 
@@ -56,63 +103,6 @@ func (t *Trajectory) Span() float64 {
 		return 0
 	}
 	return t.Samples[len(t.Samples)-1].T.Sub(t.Samples[0].T)
-}
-
-// Elements returns the osculating Keplerian elements and true anomaly [rad] at
-// sample i, derived from position and velocity.
-func (t *Trajectory) Elements(i int) (k orbits.Keplerian, trueAnomaly float64, _ error) {
-	s := t.Samples[i]
-	return orbits.KeplerianFromRV(t.Mu, s.R, s.V)
-}
-
-// SemiMajorAxis returns the osculating semi-major axis [m] at sample i from the
-// vis-viva relation, avoiding the full element solve.
-func (t *Trajectory) SemiMajorAxis(i int) float64 {
-	s := t.Samples[i]
-	r := md3.Norm(s.R)
-	v2 := md3.Dot(s.V, s.V)
-	return 1 / (2/r - v2/t.Mu)
-}
-
-// Period returns the osculating orbital period [s] at sample i.
-func (t *Trajectory) Period(i int) float64 {
-	a := t.SemiMajorAxis(i)
-	return 2 * math.Pi * math.Sqrt(a*a*a/t.Mu)
-}
-
-// SunDirection returns the unit vector from the satellite toward the Sun and
-// the satellite–Sun distance [m] at sample i. The Sun position is computed from
-// sun on demand rather than stored.
-func (t *Trajectory) SunDirection(i int, sun cosmos.Ephemeris) (dir md3.Vec, dist float64) {
-	s := t.Samples[i]
-	rel := md3.Sub(sun.Position(s.T), s.R)
-	dist = md3.Norm(rel)
-	return md3.Scale(1/dist, rel), dist
-}
-
-// BetaAngle returns the orbital beta angle [rad] at sample i: the elevation of
-// the Sun above the instantaneous orbit plane, sin(β) = ĥ·ŝ with ĥ the orbit
-// normal and ŝ the geocentric Sun direction.
-func (t *Trajectory) BetaAngle(i int, sun cosmos.Ephemeris) float64 {
-	s := t.Samples[i]
-	h := md3.Unit(md3.Cross(s.R, s.V))
-	su := md3.Unit(sun.Position(s.T))
-	return math.Asin(clampUnit(md3.Dot(h, su)))
-}
-
-// FaceCosines returns cos(angle) between each body-frame face normal and the
-// satellite→Sun direction at sample i. faces are unit normals expressed in the
-// body frame; a negative result means the face points away from the Sun.
-// Eclipse masking (forcing shadowed values to zero) is left to the caller, so
-// that the geometric cosine and the illumination state stay independent.
-func (t *Trajectory) FaceCosines(i int, faces []md3.Vec, sun cosmos.Ephemeris) []float64 {
-	dir, _ := t.SunDirection(i, sun)
-	att := t.Samples[i].Att
-	out := make([]float64, len(faces))
-	for j, f := range faces {
-		out[j] = md3.Dot(att.Rotate(f), dir) // f and dir are unit vectors
-	}
-	return out
 }
 
 // catmullRom is the interpolating cubic used by PositionAt.
@@ -130,10 +120,10 @@ var catmullRom = ms3.SplineCatmullRom()
 // large absolute coordinates of an inertial frame.
 func (t *Trajectory) PositionAt(e cosmos.Epoch) (md3.Vec, bool) {
 	n := len(t.Samples)
-	if n == 0 {
+	switch n {
+	case 0:
 		return md3.Vec{}, false
-	}
-	if n == 1 {
+	case 1:
 		ok := e.Sub(t.Samples[0].T) == 0
 		return t.Samples[0].R, ok
 	}
@@ -142,7 +132,12 @@ func (t *Trajectory) PositionAt(e cosmos.Epoch) (md3.Vec, bool) {
 		return md3.Vec{}, false
 	}
 	// Bracket: largest i with Samples[i].T <= e.
-	i := sort.Search(n, func(k int) bool { return t.Samples[k].T.Sub(t.Samples[0].T) > te }) - 1
+	i, found := slices.BinarySearchFunc(t.Samples, te, func(s State, target float64) int {
+		return cmp.Compare(s.T.Sub(t.Samples[0].T), target)
+	})
+	if !found {
+		i-- // BinarySearchFunc returns the first sample after e; step back to it
+	}
 	if i < 0 {
 		i = 0
 	}
@@ -185,7 +180,7 @@ type AttitudeFunc func(e cosmos.Epoch, r, v md3.Vec) md3.Quat
 // (the initial state is the first sample), and returns the resulting
 // Trajectory. Attitude for each sample comes from att; pass nil for identity.
 // On a propagation error the partial trajectory and the error are returned.
-func Propagate(p *OrbitPropagator, mu, step, duration float64, att AttitudeFunc) (*Trajectory, error) {
+func Propagate(p *OrbitPropagator, step, duration float64, att AttitudeFunc) (*Trajectory, error) {
 	if step <= 0 || duration <= 0 || math.IsNaN(step) || math.IsNaN(duration) {
 		return nil, fmt.Errorf("bad step %g or duration %g", step, duration)
 	}
@@ -193,7 +188,7 @@ func Propagate(p *OrbitPropagator, mu, step, duration float64, att AttitudeFunc)
 		att = func(cosmos.Epoch, md3.Vec, md3.Vec) md3.Quat { return md3.QuatIdent() }
 	}
 	nstep := int(math.Floor(duration/step + 1e-9))
-	tr := &Trajectory{Mu: mu, Samples: make([]State, 0, nstep+1)}
+	tr := &Trajectory{Samples: make([]State, 0, nstep+1)}
 	e, r, v := p.State()
 	tr.Samples = append(tr.Samples, State{T: e, R: r, V: v, Att: att(e, r, v)})
 	for i := 0; i < nstep; i++ {
@@ -207,107 +202,30 @@ func Propagate(p *OrbitPropagator, mu, step, duration float64, att AttitudeFunc)
 }
 
 // Eclipses returns the penumbra and umbra phases along the trajectory in time
-// order, with boundaries refined between samples by bisection. Each partial-
-// shadow pass yields up to three phases: an entry Penumbra, the Umbra (when the
-// Sun is fully occulted), and an exit Penumbra; a grazing pass that never
-// reaches umbra is a single Penumbra. occRadius [m] and occFlattening describe
-// the occulting central body (pass flattening 0 for a sphere); sunRadius [m] is
-// the Sun's radius.
-//
-// Both the margin sampling and the boundary refinement rely on
-// Trajectory.PositionAt, so the trajectory must resolve the orbit (see
-// PositionAt): on an undersampled survey pass the sign changes are still
-// detected but the refined boundaries are not physical.
+// order by repeatedly driving cosmos.FindNextEclipse, which interpolates
+// position with PositionAt. The trajectory must resolve the orbit (see
+// PositionAt). The scan resolution is the mean sample spacing.
 func (t *Trajectory) Eclipses(sun cosmos.Ephemeris, occRadius, occFlattening, sunRadius float64) []cosmos.Eclipse {
-	n := len(t.Samples)
-	if n < 2 {
+	if t.Len() < 2 {
 		return nil
 	}
-	// margin selects the penumbra (umbra=false) or umbra (umbra=true) shadow
-	// margin from cosmos.Shadow; negative means inside that shadow region.
-	margin := func(pos md3.Vec, e cosmos.Epoch, umbra bool) float64 {
-		pen, umb := cosmos.Shadow(sun.Position(e), pos, sunRadius, occRadius, occFlattening)
-		if umbra {
-			return umb
-		}
-		return pen
-	}
-	// negativeIntervals brackets every span where the selected margin is
-	// negative, refining each crossing on the interpolated position.
-	negativeIntervals := func(umbra bool) [][2]cosmos.Epoch {
-		var iv [][2]cosmos.Epoch
-		prev := margin(t.Samples[0].R, t.Samples[0].T, umbra)
-		in := prev < 0
-		enter := t.Samples[0].T
-		for i := 0; i+1 < n; i++ {
-			cur := prev
-			next := margin(t.Samples[i+1].R, t.Samples[i+1].T, umbra)
-			prev = next
-			if (cur < 0) == (next < 0) {
-				continue
-			}
-			cross := bisectMargin(t.Samples[i].T, t.Samples[i+1].T, func(e cosmos.Epoch) float64 {
-				pos, _ := t.PositionAt(e)
-				return margin(pos, e, umbra)
-			})
-			if next < 0 {
-				enter, in = cross, true
-			} else {
-				iv = append(iv, [2]cosmos.Epoch{enter, cross})
-				in = false
-			}
-		}
-		if in {
-			iv = append(iv, [2]cosmos.Epoch{enter, t.Samples[n-1].T})
-		}
-		return iv
-	}
-
-	shadow := negativeIntervals(false) // penumbra-or-deeper (any occultation)
-	umbra := negativeIntervals(true)   // fully occulted
-
-	// Split each shadow pass into Penumbra / Umbra / Penumbra around its
-	// contained umbra (LEO: at most one umbra per pass).
+	maxStep := t.Span() / float64(t.Len()-1)
 	var out []cosmos.Eclipse
-	ui := 0
-	for _, sh := range shadow {
-		var inner *[2]cosmos.Epoch
-		for ui < len(umbra) && umbra[ui][0].Sub(sh[1]) < 0 {
-			if umbra[ui][0].Sub(sh[0]) >= 0 {
-				inner = &umbra[ui]
-			}
-			ui++
+	start := t.Samples[0].T
+	for {
+		phases, n := cosmos.FindNextEclipse(start, maxStep, t.PositionAt, sun, occRadius, occFlattening, sunRadius)
+		if n == 0 {
+			break
 		}
-		if inner == nil {
-			out = append(out, cosmos.Eclipse{Enter: sh[0], Exit: sh[1], Kind: cosmos.Penumbra})
-			continue
+		out = append(out, phases[:n]...)
+		if next := phases[n-1].Exit; next.Sub(start) > 0 {
+			start = next
+		} else {
+			break // guard against a non-advancing degenerate event
 		}
-		out = append(out,
-			cosmos.Eclipse{Enter: sh[0], Exit: inner[0], Kind: cosmos.Penumbra},
-			cosmos.Eclipse{Enter: inner[0], Exit: inner[1], Kind: cosmos.Umbra},
-			cosmos.Eclipse{Enter: inner[1], Exit: sh[1], Kind: cosmos.Penumbra})
 	}
 	return out
 }
 
-// bisectMargin finds the epoch in [lo, hi] where f changes sign, to ~0.1 ms.
-// f(lo) and f(hi) are assumed to straddle zero.
-func bisectMargin(lo, hi cosmos.Epoch, f func(cosmos.Epoch) float64) cosmos.Epoch {
-	flo := f(lo)
-	for k := 0; k < 60; k++ {
-		mid := lo.Add(hi.Sub(lo) * 0.5)
-		if hi.Sub(lo) < 1e-4 {
-			return mid
-		}
-		fm := f(mid)
-		if (fm < 0) == (flo < 0) {
-			lo, flo = mid, fm
-		} else {
-			hi = mid
-		}
-	}
-	return lo.Add(hi.Sub(lo) * 0.5)
-}
-
 // clampUnit clamps x into [-1, 1] for safe asin/acos.
-func clampUnit(x float64) float64 { return math.Max(-1, math.Min(1, x)) }
+func clampUnit(x float64) float64 { return md1.Clamp(x, -1, 1) }

@@ -9,8 +9,6 @@ import (
 	"github.com/soypat/gnco/orbits"
 )
 
-const earthMu = 3.986004415e14 // [m³/s²]
-
 // fixedSun is a stationary Sun ephemeris for geometry tests.
 type fixedSun struct{ p md3.Vec }
 
@@ -21,7 +19,7 @@ func (f fixedSun) Position(cosmos.Epoch) md3.Vec { return f.p }
 func circularTrajectory(r0 float64, n int) (*Trajectory, float64) {
 	vc := math.Sqrt(earthMu / r0)
 	period := 2 * math.Pi * math.Sqrt(r0*r0*r0/earthMu)
-	tr := &Trajectory{Mu: earthMu, Samples: make([]State, 0, n+1)}
+	tr := &Trajectory{Samples: make([]State, 0, n+1)}
 	for i := 0; i <= n; i++ {
 		tt := period * float64(i) / float64(n)
 		th := 2 * math.Pi * float64(i) / float64(n)
@@ -41,14 +39,15 @@ func TestTrajectoryElements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr := &Trajectory{Mu: earthMu}
+	tr := &Trajectory{}
 	tas := []float64{0.1, 1.2, 2.5, 4.0, 5.5}
 	for i, ta := range tas {
 		r, v := k.RV(earthMu, ta)
 		tr.Samples = append(tr.Samples, State{T: cosmos.EpochFromTT(float64(i) * 100), R: r, V: v, Att: md3.QuatIdent()})
 	}
 	for i, ta := range tas {
-		got, gotTA, err := tr.Elements(i)
+		sample := tr.Samples[i]
+		got, gotTA, err := sample.OrbitElements(earthMu)
 		if err != nil {
 			t.Fatalf("sample %d: %v", i, err)
 		}
@@ -69,10 +68,11 @@ func TestTrajectoryElements(t *testing.T) {
 
 func TestTrajectoryPeriod(t *testing.T) {
 	tr, period := circularTrajectory(7000e3, 360)
-	if got := tr.Period(0); math.Abs(got-period) > 1e-3 {
+	sample := tr.Samples[0]
+	if got := sample.OrbitPeriod(earthMu); math.Abs(got-period) > 1e-3 {
 		t.Errorf("Period = %g, want %g", got, period)
 	}
-	if got := tr.SemiMajorAxis(0); math.Abs(got-7000e3) > 1 {
+	if got := sample.OrbitSemiMajorAxis(earthMu); math.Abs(got-7000e3) > 1 {
 		t.Errorf("SemiMajorAxis = %g, want 7000e3", got)
 	}
 }

@@ -6,6 +6,9 @@ import (
 	"github.com/soypat/geometry/md3"
 )
 
+// const earthMu = 3.986004415e14 // [m³/s²]
+const earthMu = 3.986004415e14
+
 // NewEarth returns the world as we know it according to WGS84.
 func NewEarth() *World {
 	return &World{
