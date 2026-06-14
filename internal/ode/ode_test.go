@@ -3,8 +3,6 @@ package ode
 import (
 	"math"
 	"testing"
-
-	"github.com/soypat/geometry/md3"
 )
 
 // Harmonic oscillator: y” = −ω²y.
@@ -17,11 +15,9 @@ func oscRates1(dst, y []float64, _ float64) {
 	dst[1] = -oscOmega * oscOmega * y[0]
 }
 
-// oscRates2 implements y” = −ω²y for RKN1210 (uses X component).
-func oscRates2(ypp []md3.Vec, _ []float64, yv []md3.Vec) {
-	for i := range yv {
-		ypp[i] = md3.Vec{X: -oscOmega * oscOmega * yv[i].X}
-	}
+// oscRates2 implements y” = −ω²y for RKN1210 (uses component 0).
+func oscRates2(ypp, y []float64, _ float64) {
+	ypp[0] = -oscOmega * oscOmega * y[0]
 }
 
 // oscExact returns the exact position and velocity at time t.
@@ -320,14 +316,14 @@ func TestRKN1210HarmonicOscillator(t *testing.T) {
 	}); err != nil {
 		t.Fatal("Configure:", err)
 	}
-	rk.Init(IVP2{Y0: md3.Vec{X: 1}, DY0: md3.Vec{}, T0: 0, Func: oscRates2})
+	rk.Init(IVP2{Y0: []float64{1}, DY0: []float64{0}, T0: 0, Func: oscRates2})
 
 	stepRKN(t, &rk, tf)
 
 	tFinal, yFinal, dyFinal := rk.State()
 	wantY, wantV := oscExact(tFinal)
-	errY := math.Abs(yFinal.X - wantY)
-	errV := math.Abs(dyFinal.X - wantV)
+	errY := math.Abs(yFinal[0] - wantY)
+	errV := math.Abs(dyFinal[0] - wantV)
 
 	const limit = 1e4 * atol
 	if errY > limit {
@@ -374,11 +370,11 @@ func TestOscillatorComparison(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rkn.Init(IVP2{Y0: md3.Vec{X: 1}, DY0: md3.Vec{}, T0: 0, Func: oscRates2})
+	rkn.Init(IVP2{Y0: []float64{1}, DY0: []float64{0}, T0: 0, Func: oscRates2})
 	stepRKN(t, &rkn, tf)
 	tFinal, yFinal, dyFinal := rkn.State()
-	errYN := math.Abs(yFinal.X - math.Cos(oscOmega*tFinal))
-	errVN := math.Abs(dyFinal.X - (-oscOmega * math.Sin(oscOmega*tFinal)))
+	errYN := math.Abs(yFinal[0] - math.Cos(oscOmega*tFinal))
+	errVN := math.Abs(dyFinal[0] - (-oscOmega * math.Sin(oscOmega*tFinal)))
 
 	const limit = 1e4 * atol
 	if errY45 > limit || errV45 > limit {
@@ -414,7 +410,7 @@ func BenchmarkIVP_noadaptivestep(b *testing.B) {
 	const step = 0.1
 	params := Parameters{}
 	ivp := IVP1{Y0: []float64{1, 0}, T0: 0, Func: oscRates1}
-	ivp2 := IVP2{Y0: md3.Vec{X: 1}, DY0: md3.Vec{}, T0: 0, Func: oscRates2}
+	ivp2 := IVP2{Y0: []float64{1}, DY0: []float64{0}, T0: 0, Func: oscRates2}
 	b.Run("RK4(5)", func(b *testing.B) {
 		var integ RK45
 		err := integ.Configure(params)
@@ -487,7 +483,7 @@ func BenchmarkIVP_adaptiveconvergence(b *testing.B) {
 	)
 	params := Parameters{AbsTolerance: atol, RelTolerance: rtol, MinStep: 1e-8, MaxStep: 0.5}
 	ivp := IVP1{Y0: []float64{1, 0}, T0: 0, Func: oscRates1}
-	ivp2 := IVP2{Y0: md3.Vec{X: 1}, DY0: md3.Vec{}, T0: 0, Func: oscRates2}
+	ivp2 := IVP2{Y0: []float64{1}, DY0: []float64{0}, T0: 0, Func: oscRates2}
 	wantY, _ := oscExact(tf)
 
 	b.Run("RK4(5)", func(b *testing.B) {
@@ -577,7 +573,7 @@ func BenchmarkIVP_adaptiveconvergence(b *testing.B) {
 			integ.StepCount = 0
 			stepRKN(b, &integ, tf)
 			_, y, _ := integ.State()
-			errY = math.Abs(y.X - wantY)
+			errY = math.Abs(y[0] - wantY)
 		}
 		b.ReportMetric(float64(integ.StepCount), "steps/op")
 		b.ReportMetric(errY*1e9, "errY×1e-9")

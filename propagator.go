@@ -111,22 +111,26 @@ func NewOrbitPropagator(fm *ForceModel, epoch0 cosmos.Epoch, rBI, vBI md3.Vec, c
 	if p.hNext <= 0 {
 		p.hNext = cfg.MaxStep
 	}
-	p.integ.Init(ode.IVP2{T0: 0, Y0: rBI, DY0: vBI, Func: p.accel})
+	p.integ.Init(ode.IVP2{
+		T0:   0,
+		Y0:   []float64{rBI.X, rBI.Y, rBI.Z},
+		DY0:  []float64{vBI.X, vBI.Y, vBI.Z},
+		Func: p.accel,
+	})
 	return p, nil
 }
 
-// accel is the vectorised ODE right-hand side: y” = Accel(epoch0+t, y).
-func (p *OrbitPropagator) accel(yppDst []md3.Vec, tv []float64, yv []md3.Vec) {
-	for i := range yppDst {
-		yppDst[i] = p.fm.Accel(p.epoch0.Add(tv[i]), yv[i])
-	}
+// accel is the ODE right-hand side: y” = Accel(epoch0+t, y).
+func (p *OrbitPropagator) accel(yppDst, y []float64, t float64) {
+	a := p.fm.Accel(p.epoch0.Add(t), md3.Vec{X: y[0], Y: y[1], Z: y[2]})
+	yppDst[0], yppDst[1], yppDst[2] = a.X, a.Y, a.Z
 }
 
 // State returns the current absolute epoch and inertial position [m] and
 // velocity [m/s].
 func (p *OrbitPropagator) State() (e cosmos.Epoch, r, v md3.Vec) {
-	t, r, v := p.integ.State()
-	return p.epoch0.Add(t), r, v
+	t, rs, vs := p.integ.State()
+	return p.epoch0.Add(t), md3.Vec{X: rs[0], Y: rs[1], Z: rs[2]}, md3.Vec{X: vs[0], Y: vs[1], Z: vs[2]}
 }
 
 // Elapsed returns seconds integrated since the initial epoch.

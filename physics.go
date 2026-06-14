@@ -40,8 +40,8 @@ func NewPhysicsPointIntegrator(coord Coordinates, t0 float64, SBI0, VBI0 md3.Vec
 	}
 	p.integrator.Init(ode.IVP2{
 		T0:   t0,
-		Y0:   SBI0,
-		DY0:  VBI0,
+		Y0:   []float64{SBI0.X, SBI0.Y, SBI0.Z},
+		DY0:  []float64{VBI0.X, VBI0.Y, VBI0.Z},
 		Func: p.accelRK12,
 	})
 	return p
@@ -49,7 +49,8 @@ func NewPhysicsPointIntegrator(coord Coordinates, t0 float64, SBI0, VBI0 md3.Vec
 
 // State returns the current time, inertial position and velocity.
 func (phys *PhysicsPointIntegrator) State() (t float64, SBI, VBI md3.Vec) {
-	return phys.integrator.State()
+	t, y, dy := phys.integrator.State()
+	return t, md3.Vec{X: y[0], Y: y[1], Z: y[2]}, md3.Vec{X: dy[0], Y: dy[1], Z: dy[2]}
 }
 
 // Step advances the integrator by dt using external geographic-frame acceleration.
@@ -59,13 +60,13 @@ func (phys *PhysicsPointIntegrator) Step(dt float64, externalAccelGeographicFram
 	if phys.lastStepWasFast {
 		tNow, y := phys.integratorFast.State()
 		phys.integrator.SetState(tNow,
-			md3.Vec{X: y[0], Y: y[1], Z: y[2]},
-			md3.Vec{X: y[3], Y: y[4], Z: y[5]},
+			[]float64{y[0], y[1], y[2]},
+			[]float64{y[3], y[4], y[5]},
 		)
 		phys.lastStepWasFast = false
 	}
 	phys.integrator.Step(dt)
-	return phys.integrator.State()
+	return phys.State()
 }
 
 // StepFast advances the integrator by dt using RK45 instead of RKN1210.
@@ -77,7 +78,7 @@ func (phys *PhysicsPointIntegrator) StepFast(dt float64, externalAccelGeographic
 		tNow, sbi, vbi := phys.integrator.State()
 		phys.integratorFast.Init(ode.IVP1{
 			T0:   tNow,
-			Y0:   []float64{sbi.X, sbi.Y, sbi.Z, vbi.X, vbi.Y, vbi.Z},
+			Y0:   []float64{sbi[0], sbi[1], sbi[2], vbi[0], vbi[1], vbi[2]},
 			Func: phys.accelFast,
 		})
 		phys.lastStepWasFast = true
@@ -89,12 +90,10 @@ func (phys *PhysicsPointIntegrator) StepFast(dt float64, externalAccelGeographic
 		md3.Vec{X: y[3], Y: y[4], Z: y[5]}
 }
 
-func (phys *PhysicsPointIntegrator) accelRK12(yppDst []md3.Vec, tv []float64, yv []md3.Vec) {
-	for i := range yppDst {
-		t, SBII := tv[i], yv[i]
-		ABII := phys.accelMain(SBII, t)
-		yppDst[i] = ABII
-	}
+func (phys *PhysicsPointIntegrator) accelRK12(yppDst, y []float64, t float64) {
+	SBII := md3.Vec{X: y[0], Y: y[1], Z: y[2]}
+	ABII := phys.accelMain(SBII, t)
+	yppDst[0], yppDst[1], yppDst[2] = ABII.X, ABII.Y, ABII.Z
 }
 
 // accelFast is the rates function for integratorFast.
