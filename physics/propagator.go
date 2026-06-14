@@ -49,7 +49,7 @@ func (fm *ForceModel) SetNutationInterval(intervalSec float64) {
 
 // Accel returns the total acceleration [m/s²] on an orbiting point mass at
 // inertial (MJ2000Eq) position sBI [m] at absolute epoch e.
-func (fm *ForceModel) Accel(e cosmos.Epoch, sBI md3.Vec) md3.Vec {
+func (fm *ForceModel) Accel(sBI md3.Vec, e cosmos.Epoch) md3.Vec {
 	if fm.harmonics != nil {
 		TEI := fm.central.TEICached(fm.oriCache, e)
 		sBF := md3.MulMatVec(TEI, sBI)
@@ -92,8 +92,8 @@ type forceModelSource struct {
 	epoch0 cosmos.Epoch
 }
 
-func (s forceModelSource) AccelInertial(t float64, sbi md3.Vec) md3.Vec {
-	return s.fm.Accel(s.epoch0.Add(t), sbi)
+func (s forceModelSource) AccelInertial(sbi md3.Vec, epoch cosmos.Epoch) md3.Vec {
+	return s.fm.Accel(sbi, s.epoch0.Add(epoch.SecondsTT()))
 }
 
 // NewOrbitPropagator creates a propagator with initial inertial position

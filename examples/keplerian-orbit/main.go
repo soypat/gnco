@@ -19,6 +19,7 @@ import (
 
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/orbits"
 	"github.com/soypat/gnco/physics"
 )
@@ -61,7 +62,7 @@ func run() error {
 	}
 	SBI0 := md3.Vec{X: rP}
 	VBI0 := md3.Vec{Y: vT}
-	coords := earth.GeocentricFromEarthFixedCoords(SBI0, 0)
+	coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
 	a := 0.5 * (orbit.Apoapsis() + orbit.Periapsis())
 
 	fmt.Println("Keplerian orbit — RKN12(10) energy conservation")

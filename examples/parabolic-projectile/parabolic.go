@@ -7,6 +7,7 @@ import (
 
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/physics"
 )
 
@@ -31,7 +32,7 @@ func run() error {
 
 		projectileAngleRad = launchAngleElev * math.Pi / 180 // [rad]
 	)
-	SBI0, TGI := buenosAires.InertialCoords(t0)
+	SBI0, TGI := buenosAires.InertialCoords(cosmos.EpochFromTT(t0))
 	// Calculate the velocity in inertial frame of reference.
 	// We start out with velocity in geographical frame since declaring it
 	// with an elevation angle relative to our horizon makes it easier to reason about.

@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/soypat/geometry/md3"
+	"github.com/soypat/gnco/cosmos"
 )
 
 // const earthMu = 3.986004415e14 // [m³/s²]
@@ -79,12 +80,12 @@ func (w *World) J3() float64 { return w.j3 }
 // J4 returns the SGP4 un-normalised fourth zonal harmonic.
 func (w *World) J4() float64 { return w.j4 }
 
-func (w *World) GeocentricFromEarthFixedCoords(sBIE md3.Vec, epochTime float64) GeocentricCoords {
+func (w *World) GeocentricFromEarthFixedCoords(sBIE md3.Vec, epochTime cosmos.Epoch) GeocentricCoords {
 	dbi := md3.Norm(sBIE)
 	lat := math.Asin(sBIE.Z / dbi)
 	elev := dbi - w.radius
 	// longitude calculation using specialized quadrant algorithm and total earth rotation.
-	long := asinlong(sBIE.Y, sBIE.X) - w.rotation*epochTime + w.celestialLong
+	long := asinlong(sBIE.Y, sBIE.X) - w.rotation*epochTime.SecondsTT() + w.celestialLong
 	long = clampLongLat(long)
 	return GeocentricCoords{
 		w:    w,
@@ -133,9 +134,9 @@ func (w *World) HASL(elev float64) float64 {
 }
 
 // TEI returns the [T]^{EI} transformation tensor given the epochTime in seconds.
-func (w *World) TEI(epochTime float64) md3.Mat3 {
+func (w *World) TEI(epoch cosmos.Epoch) md3.Mat3 {
 	// argument to sincos: [s]*[rad/s]=[rad]
-	sin, cos := math.Sincos(epochTime * w.rotation)
+	sin, cos := math.Sincos(epoch.SecondsTT() * w.rotation)
 	return mat3(
 		cos, sin, 0,
 		-sin, cos, 0,

@@ -3,6 +3,7 @@ package physics
 import (
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/physics/ode"
 )
 
@@ -10,7 +11,7 @@ import (
 // point mass. It is evaluated once per integrator stage at inertial position sbi
 // [m] and integration time t [s], and must return the full acceleration [m/s²]
 // (gravity plus any external forcing) expressed in the inertial frame.
-type AccelSource func(t float64, sbi md3.Vec) (abi md3.Vec)
+type AccelSource func(sbi md3.Vec, epoch cosmos.Epoch) (abi md3.Vec)
 
 // PointIntegrator integrates a point mass with inertial kinematics under an
 // AccelSource. The acceleration is evaluated per integrator stage, so a source
@@ -32,11 +33,11 @@ type coordAccelSource struct {
 	extAccelGeo md3.Vec
 }
 
-func (s *coordAccelSource) AccelInertial(t float64, sbi md3.Vec) md3.Vec {
+func (s *coordAccelSource) AccelInertial(sbi md3.Vec, epoch cosmos.Epoch) md3.Vec {
 	coord := s.coord
 	w := coord.World()
-	TEI := w.TEI(t)
-	coord.SetFromEarthFixedCoords(sbi, t)
+	TEI := w.TEI(epoch)
+	coord.SetFromEarthFixedCoords(sbi, epoch)
 	// Calculate TM geographic wrt earth coordinates.
 	TGE := coord.TGE()
 	// Calculate TM of geographic wrt inertial coordinates.
@@ -151,14 +152,14 @@ func (phys *PointIntegrator) StepFast(dt float64, externalAccelGeographicFrameNo
 }
 
 func (phys *PointIntegrator) accelRK12(yppDst, y []float64, t float64) {
-	ABII := phys.src(t, md3.Vec{X: y[0], Y: y[1], Z: y[2]})
+	ABII := phys.src(md3.Vec{X: y[0], Y: y[1], Z: y[2]}, cosmos.EpochFromTT(t))
 	yppDst[0], yppDst[1], yppDst[2] = ABII.X, ABII.Y, ABII.Z
 }
 
 // accelFast is the rates function for integratorFast.
 // State y = [x, y, z, vx, vy, vz]; dst = [vx, vy, vz, ax, ay, az].
 func (phys *PointIntegrator) accelFast(dst, y []float64, t float64) {
-	ABII := phys.src(t, md3.Vec{X: y[0], Y: y[1], Z: y[2]})
+	ABII := phys.src(md3.Vec{X: y[0], Y: y[1], Z: y[2]}, cosmos.EpochFromTT(t))
 	dst[0], dst[1], dst[2] = y[3], y[4], y[5]
 	dst[3], dst[4], dst[5] = ABII.X, ABII.Y, ABII.Z
 }
@@ -167,10 +168,10 @@ func (phys *PointIntegrator) accelFast(dst, y []float64, t float64) {
 // inertial position sbi and time t, using coord's gravity model. coord is
 // stateful: SetFromEarthFixedCoords mutates it, so callers must invoke this
 // sequentially (one ODE stage at a time).
-func gravInertial(coord gnco.Coordinates, sbi md3.Vec, t float64) md3.Vec {
+func gravInertial(coord gnco.Coordinates, sbi md3.Vec, epoch cosmos.Epoch) md3.Vec {
 	w := coord.World()
-	TEI := w.TEI(t)
-	coord.SetFromEarthFixedCoords(sbi, t)
+	TEI := w.TEI(epoch)
+	coord.SetFromEarthFixedCoords(sbi, epoch)
 	// TM of geographic wrt inertial coordinates.
 	TGI := md3.MulMat3(coord.TGE(), TEI)
 	return md3.MulMatVecTrans(TGI, coord.AGravG())

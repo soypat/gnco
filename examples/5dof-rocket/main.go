@@ -7,6 +7,7 @@ import (
 
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/physics"
 )
 
@@ -50,7 +51,7 @@ func run() error {
 	earth := gnco.NewEarth()
 	launchSite := earth.GeocentricFromDegrees(-34.6, -58.4, earth.HASLToElevation(25))
 
-	SBI0, TGI0 := launchSite.InertialCoords(0)
+	SBI0, TGI0 := launchSite.InertialCoords(cosmos.EpochFromTT(0))
 
 	// Tiny seed speed so TVGFromGeographicVelocity returns the correct launch-
 	// direction orientation. Bearing is North, elevation 85°.
@@ -92,7 +93,7 @@ func run() error {
 
 	for t < maxT {
 		hasl := coords.HASL()
-		TGI := coords.TGI(t)
+		TGI := coords.TGI(cosmos.EpochFromTT(t))
 
 		// Earth-relative velocity in geographic frame: VBEG = TGI * (VBI - ω×SBI).
 		// Aero forces and TVG updates use Earth-relative speed, not inertial speed.
@@ -130,7 +131,7 @@ func run() error {
 		accelGeog := md3.MulMatVecTrans(TVG, AFpsV)
 		t, SBI, VBI = integrator.Step(dt, accelGeog)
 		// Post-step: integrate geographic displacement and update TVG.
-		newTGI := coords.TGI(t)
+		newTGI := coords.TGI(cosmos.EpochFromTT(t))
 		newVBEG := md3.MulMatVec(newTGI, md3.Sub(VBI, md3.Cross(weii, SBI)))
 		sbeg = md3.Add(sbeg, md3.Scale(dt/2, md3.Add(newVBEG, VBEG)))
 		if t > 10 || md3.Norm(sbeg) > rampLength {

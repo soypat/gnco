@@ -3,6 +3,7 @@ package physics
 import (
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/physics/ode"
 )
 
@@ -100,7 +101,7 @@ func (rbi *RigidBodyIntegrator) rates(dst, y []float64, t float64) {
 	omega := md3.Vec{X: y[10], Y: y[11], Z: y[12]}
 
 	// Translation: gravity (inertial) + body-frame force rotated to inertial.
-	aGrav := gravInertial(rbi.coord, r, t)
+	aGrav := gravInertial(rbi.coord, r, cosmos.EpochFromTT(t))
 	aExt := md3.Scale(1/rbi.mass, q.Rotate(rbi.lastForceBody))
 	a := md3.Add(aGrav, aExt)
 
