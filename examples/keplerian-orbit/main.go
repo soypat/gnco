@@ -19,6 +19,7 @@ import (
 
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/orbits"
 	"github.com/soypat/gnco/physics"
 )
@@ -61,7 +62,7 @@ func run() error {
 	}
 	SBI0 := md3.Vec{X: rP}
 	VBI0 := md3.Vec{Y: vT}
-	coords := earth.GeocentricFromEarthFixedCoords(SBI0, 0)
+	coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
 	a := 0.5 * (orbit.Apoapsis() + orbit.Periapsis())
 
 	fmt.Println("Keplerian orbit — RKN12(10) energy conservation")
@@ -73,14 +74,15 @@ func run() error {
 	fmt.Printf("%-8s  %-12s  %-12s  %-12s  %-12s\n", "t [h]", "radius [km]", "speed [m/s]", "rk45 |ΔE/E₀|", "rk1210 |ΔE/E₀|")
 	fmt.Println("--------  ------------  ------------  ------------  -----------")
 	var integrator, integratorFast physics.PointIntegrator
-	err1 := integrator.Configure(&coords, 0, SBI0, VBI0)
-	err2 := integratorFast.Configure(&coords, 0, SBI0, VBI0)
+	epoch0 := cosmos.Epoch{} // J2000 anchor; only elapsed time matters here.
+	err1 := integrator.ConfigureCoord(&coords, epoch0, SBI0, VBI0)
+	err2 := integratorFast.ConfigureCoord(&coords, epoch0, SBI0, VBI0)
 	if err1 != nil || err2 != nil {
 		return errors.Join(err1, err2)
 	}
-	t, SBI, VBI := integrator.State()
+	_, SBI, VBI := integrator.State()
 	SBIfast, VBIfast := SBI, VBI // copy for fast integration comparison.
-	tfast := t
+	t, tfast := 0.0, 0.0         // seconds elapsed since epoch0
 	nextPrint := 0.0
 	totalSteps := 0
 	var maxErrE float64
@@ -103,8 +105,10 @@ func run() error {
 		}
 		// Zero external forces other than gravity.
 		// Gravity is calculated within Step from the gnco.Coordinates system provided.
-		t, SBI, VBI = integrator.Step(dt, md3.Vec{})
-		tfast, SBIfast, VBIfast = integratorFast.StepFast(dt, md3.Vec{})
+		var e, efast cosmos.Epoch
+		e, SBI, VBI = integrator.Step(dt, md3.Vec{})
+		efast, SBIfast, VBIfast = integratorFast.StepFast(dt, md3.Vec{})
+		t, tfast = e.Sub(epoch0), efast.Sub(epoch0)
 		totalSteps++
 	}
 

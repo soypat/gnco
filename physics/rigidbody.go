@@ -3,6 +3,7 @@ package physics
 import (
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/physics/ode"
 )
 
@@ -24,6 +25,7 @@ type RigidBodyIntegrator struct {
 	//	[10:13] ω   angular velocity, body frame
 	integrator     ode.RKF78
 	coord          gnco.Coordinates
+	epoch0         cosmos.Epoch // absolute anchor; integration time is relative to it
 	mass           float64
 	inertia        md3.Mat3
 	inertiaInv     md3.Mat3
@@ -31,14 +33,15 @@ type RigidBodyIntegrator struct {
 	lastTorqueBody md3.Vec // external body-frame torque, held constant across a Step
 }
 
-// Configure initializes the rigid-body integrator.
-// SBI0/VBI0 are the initial inertial position and velocity, att0 is the initial
-// body→inertial attitude (normalized internally), omega0 is the initial
+// Configure initializes the rigid-body integrator anchored at absolute epoch
+// epoch0. SBI0/VBI0 are the initial inertial position and velocity, att0 is the
+// initial body→inertial attitude (normalized internally), omega0 is the initial
 // body-frame angular velocity, mass is the body mass [kg] and inertia is the
 // body-frame inertia tensor [kg·m²].
-func (rbi *RigidBodyIntegrator) Configure(coord gnco.Coordinates, t0 float64, SBI0, VBI0 md3.Vec, att0 md3.Quat, omega0 md3.Vec, mass float64, inertia md3.Mat3) error {
+func (rbi *RigidBodyIntegrator) Configure(coord gnco.Coordinates, epoch0 cosmos.Epoch, SBI0, VBI0 md3.Vec, att0 md3.Quat, omega0 md3.Vec, mass float64, inertia md3.Mat3) error {
 	*rbi = RigidBodyIntegrator{
 		coord:      coord,
+		epoch0:     epoch0,
 		mass:       mass,
 		inertia:    inertia,
 		inertiaInv: inertia.Inverse(),
@@ -53,7 +56,7 @@ func (rbi *RigidBodyIntegrator) Configure(coord gnco.Coordinates, t0 float64, SB
 	}
 	q := att0.Unit()
 	rbi.integrator.Init(ode.IVP1{
-		T0: t0,
+		T0: 0, // ODE works relative to epoch0; absolute epoch rebuilt in rates.
 		Y0: []float64{
 			SBI0.X, SBI0.Y, SBI0.Z,
 			VBI0.X, VBI0.Y, VBI0.Z,
@@ -65,11 +68,11 @@ func (rbi *RigidBodyIntegrator) Configure(coord gnco.Coordinates, t0 float64, SB
 	return nil
 }
 
-// State returns the current time, inertial position and velocity, body→inertial
-// attitude and body-frame angular velocity.
-func (rbi *RigidBodyIntegrator) State() (t float64, SBI, VBI md3.Vec, att md3.Quat, omega md3.Vec) {
+// State returns the current absolute epoch, inertial position and velocity,
+// body→inertial attitude and body-frame angular velocity.
+func (rbi *RigidBodyIntegrator) State() (epoch cosmos.Epoch, SBI, VBI md3.Vec, att md3.Quat, omega md3.Vec) {
 	t, y := rbi.integrator.State()
-	return t,
+	return rbi.epoch0.Add(t),
 		md3.Vec{X: y[0], Y: y[1], Z: y[2]},
 		md3.Vec{X: y[3], Y: y[4], Z: y[5]},
 		md3.Quat{I: y[6], J: y[7], K: y[8], W: y[9]},
@@ -79,7 +82,7 @@ func (rbi *RigidBodyIntegrator) State() (t float64, SBI, VBI md3.Vec, att md3.Qu
 // Step advances the state by dt using external body-frame force and torque,
 // which are held constant across the step. Gravity is computed internally per
 // stage. The attitude quaternion is renormalized after the step.
-func (rbi *RigidBodyIntegrator) Step(dt float64, forceBody, torqueBody md3.Vec) (t float64, SBI, VBI md3.Vec, att md3.Quat, omega md3.Vec) {
+func (rbi *RigidBodyIntegrator) Step(dt float64, forceBody, torqueBody md3.Vec) (epoch cosmos.Epoch, SBI, VBI md3.Vec, att md3.Quat, omega md3.Vec) {
 	rbi.lastForceBody = forceBody
 	rbi.lastTorqueBody = torqueBody
 	rbi.integrator.Step(dt)
@@ -100,7 +103,7 @@ func (rbi *RigidBodyIntegrator) rates(dst, y []float64, t float64) {
 	omega := md3.Vec{X: y[10], Y: y[11], Z: y[12]}
 
 	// Translation: gravity (inertial) + body-frame force rotated to inertial.
-	aGrav := gravInertial(rbi.coord, r, t)
+	aGrav := gravInertial(rbi.coord, r, rbi.epoch0.Add(t))
 	aExt := md3.Scale(1/rbi.mass, q.Rotate(rbi.lastForceBody))
 	a := md3.Add(aGrav, aExt)
 
