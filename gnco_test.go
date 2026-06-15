@@ -10,6 +10,7 @@ import (
 	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/orbits"
 	"github.com/soypat/gnco/physics"
+	"github.com/soypat/gnco/physics/ode"
 )
 
 // tvgRow extracts row n of a TVG matrix via its transpose action on a basis vector.
@@ -236,7 +237,7 @@ func TestRigidBodyTorqueFreeSymmetric(t *testing.T) {
 	omega0 := md3.Vec{X: 0.1, Y: 0.2, Z: -0.05}
 	I := md3.Diagonal3(10, 10, 10) // isotropic
 	var rb physics.RigidBodyIntegrator
-	rb.Configure(&coords, cosmos.Epoch{}, SBI0, md3.Vec{}, md3.QuatIdent(), omega0, 100, I)
+	rb.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, md3.Vec{}, md3.QuatIdent(), omega0, 100, I)
 	const dt = 0.1
 	var maxOmegaErr, maxQErr float64
 	for i := 0; i < 3000; i++ {
@@ -268,7 +269,7 @@ func TestRigidBodyTorqueFreeAsymmetric(t *testing.T) {
 	omega0 := md3.Vec{X: 0.3, Y: 0.2, Z: 0.15}
 	I := md3.Diagonal3(1.0, 2.5, 4.0) // distinct principal moments → tumbling
 	var rb physics.RigidBodyIntegrator
-	rb.Configure(&coords, cosmos.Epoch{}, SBI0, md3.Vec{}, md3.QuatIdent(), omega0, 100, I)
+	rb.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, md3.Vec{}, md3.QuatIdent(), omega0, 100, I)
 
 	// Initial invariants.
 	angMom := func(q md3.Quat, w md3.Vec) md3.Vec {
@@ -335,7 +336,7 @@ func TestRigidBodyTranslationEnergy(t *testing.T) {
 	coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
 	I := md3.Diagonal3(1, 2, 3)
 	var rb physics.RigidBodyIntegrator
-	rb.Configure(&coords, cosmos.Epoch{}, SBI0, VBI0, md3.QuatIdent(), md3.Vec{X: 0.1}, 100, I)
+	rb.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, VBI0, md3.QuatIdent(), md3.Vec{X: 0.1}, 100, I)
 
 	ep, SBI, VBI, q, _ := rb.State()
 	tt := ep.Sub(cosmos.Epoch{})
@@ -360,6 +361,53 @@ func TestRigidBodyTranslationEnergy(t *testing.T) {
 		t.Errorf("quaternion norm drifted by %.2e from unit", maxQErr)
 	}
 	t.Logf("max |ΔE/E₀|=%.2e  max|‖q‖-1|=%.2e", maxErrE, maxQErr)
+}
+
+// TestRigidBodyWrenchSource exercises the general Configure path with a custom
+// WrenchSource (no gnco.Coordinates). A constant body-frame torque about the
+// body x-axis, with diagonal inertia and ω initially aligned with x, gives no
+// gyroscopic coupling (ω×Iω = 0), so the body angular velocity grows linearly:
+// ωx(t) = (τx/Ix)·t. This validates per-stage source evaluation, the non-coord
+// path, and adaptive substepping.
+func TestRigidBodyWrenchSource(t *testing.T) {
+	I := md3.Diagonal3(2, 3, 4)
+	const tauX = 0.6
+	wd := tauX / 2 // expected ω̇x = τx/Ix
+
+	// Source ignores state: zero force (no gravity), constant body torque about x.
+	src := func(st physics.RigidState, e cosmos.Epoch) (force, torque md3.Vec) {
+		return md3.Vec{}, md3.Vec{X: tauX}
+	}
+
+	// Adaptive substepping (absolute tolerance, so the error scale is non-zero
+	// even with a zero translational state). MaxStep < dt forces several substeps
+	// per Step.
+	var rb physics.RigidBodyIntegrator
+	err := rb.Configure(src, ode.Parameters{AbsTolerance: 1e-9, MinStep: 1e-3, MaxStep: 2},
+		cosmos.Epoch{}, md3.Vec{}, md3.Vec{}, md3.QuatIdent(), md3.Vec{}, 100, I)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const dt = 2.0
+	const nSteps = 5
+	var maxErr float64
+	for i := 1; i <= nSteps; i++ {
+		_, _, _, _, w := rb.Step(dt, md3.Vec{}, md3.Vec{})
+		tElapsed := float64(i) * dt
+		want := wd * tElapsed
+		// ω must stay on the x-axis (no coupling) and match the analytic value.
+		if e := math.Abs(w.X-want) / want; e > maxErr {
+			maxErr = e
+		}
+		if off := math.Hypot(w.Y, w.Z); off > 1e-9 {
+			t.Errorf("step %d: ω left the x-axis: |(ωy,ωz)|=%.2e", i, off)
+		}
+	}
+	if maxErr > 1e-9 {
+		t.Errorf("ωx relative error %.2e exceeds 1e-9 (want linear spin-up τx/Ix)", maxErr)
+	}
+	t.Logf("max ωx rel err=%.2e", maxErr)
 }
 
 func TestPhysicsKeplerianEnergy(t *testing.T) {
