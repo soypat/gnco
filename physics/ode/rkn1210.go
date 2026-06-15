@@ -3,8 +3,6 @@ package ode
 import (
 	"errors"
 	"math"
-
-	"github.com/soypat/geometry/md3"
 )
 
 const (
@@ -22,24 +20,25 @@ type Parameters struct {
 }
 
 func (cfg Parameters) Validate() error {
-	if (cfg.AbsTolerance != 0 && cfg.MaxStep <= 0) ||
+	adaptive := cfg.AbsTolerance != 0 || cfg.RelTolerance != 0
+	if (adaptive && cfg.MaxStep <= 0) ||
 		cfg.MaxStep < cfg.MinStep ||
-		cfg.MinStep < 0 ||
-		(cfg.RelTolerance != 0 && cfg.MaxStep <= 0) {
+		cfg.MinStep < 0 {
 		return errors.New("invalid ODE parameters supplied")
 	}
 	return nil
 }
 
+// IVP2 defines a second-order initial value problem with an n-dimensional slice
+// state: y'' = Func(t, y), with initial position Y0 and initial velocity DY0.
 type IVP2 struct {
-	Y0  md3.Vec
-	DY0 md3.Vec
+	Y0  []float64
+	DY0 []float64
 	T0  float64
-	// Func are the second derivatives of the solution such that
-	//  dst = y''(t) = Func(t, y(t))
-	// The function call is vectorised such that len(yppDst)==len(t)==len(y)
-	// and after Func call ends yppDst must have evaluation of second order derivative of solution.
-	Func func(yppDst []md3.Vec, tv []float64, yv []md3.Vec)
+	// Func evaluates the second derivative of the solution:
+	//  yppDst[i] = y''_i(t) = Func(t, y)
+	// On return yppDst holds the evaluation of the second-order derivative.
+	Func func(yppDst, y []float64, t float64)
 }
 
 // RKN1210 is a Runge-Kutta-Nyström 12(10) integration scheme implementation for second-order differential equation systems.
@@ -47,25 +46,32 @@ type RKN1210 struct {
 	dom     float64
 	precond float64
 	relax   float64
-	y, dy   md3.Vec
+	y, dy   []float64
 	// Low and high order terms from integration.
-	hFDb, hFb, hFDbhat, hFbhat md3.Vec
-	f                          [rk1210Len]md3.Vec
-	auxv                       [rk1210Len]md3.Vec
+	hFDb, hFb, hFDbhat, hFbhat []float64
+	f                          [rk1210Len][]float64
+	auxv                       [rk1210Len][]float64
 	auxt                       [rk1210Len]float64
 	// Step control.
-	atol, minStep, maxStep float64
-	fx                     func(yppDst []md3.Vec, tv []float64, yv []md3.Vec)
+	atol, rtol, minStep, maxStep float64
+	fx                           func(yppDst, y []float64, t float64)
+	StepCount                    int
 }
 
 func (rk *RKN1210) Configure(relax, preConditioner float64, cfg Parameters) error {
 	if err := cfg.Validate(); err != nil {
 		return err
+	} else if cfg.AbsTolerance != 0 && cfg.RelTolerance != 0 {
+		// Unlike RK45 (scipy-style combined tolerances), RKN1210 has two
+		// distinct step controllers: absolute (legacy) and relative
+		// (GMAT RSSStep-like). Pick one.
+		return errors.New("rkn1210: AbsTolerance and RelTolerance are mutually exclusive")
 	} else if relax <= 0 || relax >= 1 {
 		return errors.New("bad relax factor")
 	} else if preConditioner <= 1 || preConditioner > 11 {
 		return errors.New("bad preconditioner")
 	}
+	rk.rtol = cfg.RelTolerance
 	rk.atol = cfg.AbsTolerance
 	rk.minStep = cfg.MinStep
 	rk.maxStep = cfg.MaxStep
@@ -74,20 +80,35 @@ func (rk *RKN1210) Configure(relax, preConditioner float64, cfg Parameters) erro
 	return nil
 }
 
+// Init binds the initial value problem and allocates workspace.
 func (rk *RKN1210) Init(ivp IVP2) {
 	rk.reset()
+	n := len(ivp.Y0)
 	rk.fx = ivp.Func
 	// Initial value problem definition.
-	rk.dom, rk.y = ivp.T0, ivp.Y0
-	rk.dy = ivp.DY0
+	rk.dom = ivp.T0
+	rk.y = append(make([]float64, 0, n), ivp.Y0...)
+	rk.dy = append(make([]float64, 0, n), ivp.DY0...)
+	for i := range rk.f {
+		rk.f[i] = make([]float64, n)
+		rk.auxv[i] = make([]float64, n)
+	}
+	rk.hFb = make([]float64, n)
+	rk.hFDb = make([]float64, n)
+	rk.hFbhat = make([]float64, n)
+	rk.hFDbhat = make([]float64, n)
 }
 
-func (rk *RKN1210) State() (t float64, y, dy md3.Vec) {
+// State returns the current time and views of the current position and velocity.
+func (rk *RKN1210) State() (t float64, y, dy []float64) {
 	return rk.dom, rk.y, rk.dy
 }
 
-func (rk *RKN1210) SetState(t float64, y, dy md3.Vec) {
-	rk.dom, rk.y, rk.dy = t, y, dy
+// SetState overwrites the current integration state.
+func (rk *RKN1210) SetState(t float64, y, dy []float64) {
+	rk.dom = t
+	copy(rk.y, y)
+	copy(rk.dy, dy)
 }
 
 func (rk *RKN1210) reset() {
@@ -95,17 +116,20 @@ func (rk *RKN1210) reset() {
 		precond: rk.precond,
 		relax:   rk.relax,
 		atol:    rk.atol,
+		rtol:    rk.rtol,
 		minStep: rk.minStep,
 		maxStep: rk.maxStep,
 	}
 }
 
 func (rk *RKN1210) Step(h float64) (float64, error) {
-	adaptive := rk.atol > 0
+	const maxStepAttempts = 50
+	adaptive := rk.atol > 0 || rk.rtol > 0
+	attempts := 0
 	var hadapt float64
-	var aux md3.Vec
 	y := rk.y
 	dy := rk.dy
+	n := len(y)
 	fun := rk.fx
 	F := &rk.f
 	yv := &rk.auxv
@@ -114,46 +138,89 @@ func (rk *RKN1210) Step(h float64) (float64, error) {
 	relax := rk.relax
 	preCond := rk.precond
 SOLVE:
-	rk.hFbhat = md3.Vec{}
-	rk.hFDbhat = md3.Vec{}
-	rk.hFb = md3.Vec{}
-	rk.hFDb = md3.Vec{}
+	for c := range n {
+		rk.hFbhat[c] = 0
+		rk.hFDbhat[c] = 0
+		rk.hFb[c] = 0
+		rk.hFDb[c] = 0
+	}
 	h2 := h * h
 
 	for j := range F {
-		// aux = y + h*c[j]*dy + h²*Σ A[j][i]*F[i]
+		// yv[j] = y + h*c[j]*dy + h²*Σ A[j][i]*F[i]
 		// F[i] are from the current step's already-evaluated stages (i < j),
 		// so each stage correctly builds on all previous stages of this step.
 		hc := h * rkn12c[j]
-		aux = md3.Add(y, md3.Scale(hc, dy))
-		for iF := 0; iF < j; iF++ {
-			aux = md3.Add(aux, md3.Scale(h2*rkn12A[j][iF], F[iF]))
+		for c := range n {
+			s := y[c] + hc*dy[c]
+			for iF := 0; iF < j; iF++ {
+				s += h2 * rkn12A[j][iF] * F[iF][c]
+			}
+			yv[j][c] = s
 		}
-		yv[j] = aux
 		tv[j] = t + hc
-		fun(F[j:j+1], tv[j:j+1], yv[j:j+1]) // evaluate stage j immediately so F[j] is available for j+1
+		fun(F[j], yv[j], tv[j]) // evaluate stage j immediately so F[j] is available for j+1
 
 		fj := F[j]
-		rk.hFDbhat = md3.Add(rk.hFDbhat, md3.Scale(h*rkn12bphat[j], fj))
-		rk.hFbhat = md3.Add(rk.hFbhat, md3.Scale(h*rkn12bhat[j], fj))
-		if adaptive {
-			rk.hFb = md3.Add(rk.hFb, md3.Scale(h*rkn12b[j], fj))
-			rk.hFDb = md3.Add(rk.hFDb, md3.Scale(h*rkn12bp[j], fj))
+		for c := range n {
+			rk.hFDbhat[c] += h * rkn12bphat[j] * fj[c]
+			rk.hFbhat[c] += h * rkn12bhat[j] * fj[c]
+			if adaptive {
+				rk.hFb[c] += h * rkn12b[j] * fj[c]
+				rk.hFDb[c] += h * rkn12bp[j] * fj[c]
+			}
 		}
 	}
 
 	if adaptive {
-		// Calculate the difference between high and low order terms.
-		aux = md3.Sub(rk.hFb, rk.hFbhat)
-		errMax := h * (math.Abs(aux.X) + math.Abs(aux.Y) + math.Abs(aux.Z)) // error ~ h*| y_l- y_h |
-		aux = md3.Sub(rk.hFDb, rk.hFDbhat)
-		// In taking the Max we use worst case error.
-		errMax = math.Max(errMax, math.Abs(aux.X)+math.Abs(aux.Y)+math.Abs(aux.Z)) // error ~ h*| y_l- y_h |
-		errRatio := rk.atol / (errMax * h * preCond)
-		hadapt = relax * math.Pow(errRatio, 1./preCond)
+		exceeded := false
+		if rk.rtol > 0 {
+			// Relative error control analogous to GMAT's RSSStep: the
+			// low-vs-high order estimate normalized by the step's state
+			// change, position and velocity blocks compared separately.
+			var errPos2, errVel2, dPos2, dVel2 float64
+			for c := range n {
+				ep := rk.hFb[c] - rk.hFbhat[c]
+				errPos2 += ep * ep
+				ev := rk.hFDb[c] - rk.hFDbhat[c]
+				errVel2 += ev * ev
+				dp := dy[c] + rk.hFbhat[c]
+				dPos2 += dp * dp
+				dVel2 += rk.hFDbhat[c] * rk.hFDbhat[c]
+			}
+			errPos := h * math.Sqrt(errPos2)
+			errVel := math.Sqrt(errVel2)
+			dPos := h * math.Sqrt(dPos2) // position change over step
+			dVel := math.Sqrt(dVel2)     // velocity change over step
+			const tiny = 1e-300          // guard zero state change
+			errRel := math.Max(errPos/math.Max(dPos, tiny), errVel/math.Max(dVel, tiny))
+			exceeded = errRel > rk.rtol
+			// Standard controller: local error of the 10th-order solution
+			// scales as h^11 = h^precond (default preconditioner 11).
+			hadapt = relax * h * math.Pow(rk.rtol/math.Max(errRel, tiny), 1/preCond)
+		} else {
+			// Calculate the difference between high and low order terms.
+			var errPosL1, errVelL1 float64
+			for c := range n {
+				errPosL1 += math.Abs(rk.hFb[c] - rk.hFbhat[c])
+				errVelL1 += math.Abs(rk.hFDb[c] - rk.hFDbhat[c])
+			}
+			errMax := h * errPosL1 // error ~ h*| y_l- y_h |
+			// In taking the Max we use worst case error.
+			errMax = math.Max(errMax, errVelL1) // error ~ h*| y_l- y_h |
+			errRatio := rk.atol / (errMax * h * preCond)
+			hadapt = relax * math.Pow(errRatio, 1./preCond)
+			exceeded = errMax > rk.atol
+		}
 		hadapt = math.Min(math.Max(hadapt, rk.minStep), rk.maxStep)
-		if errMax > rk.atol && h > rk.minStep {
-			// Error is not permissible and we may redo the step.
+		if exceeded {
+			attempts++
+			if h <= rk.minStep {
+				return h, errors.New("rkn1210: error tolerance unattainable at minimum step size")
+			} else if attempts > maxStepAttempts {
+				return h, errors.New("rkn1210: error tolerance unattained after max step attempts")
+			}
+			// Error is not permissible and we redo the step.
 			h = hadapt
 			goto SOLVE
 		}
@@ -161,10 +228,12 @@ SOLVE:
 	// calculate next step solutions with high order B's:
 	//  y[i+1] = y[i] + h*(dy[i] + hFbhat)
 	//  dy[i+1] = dy[i] + hFDbhat
-	aux = md3.Add(dy, rk.hFbhat)
-	rk.y = md3.Add(rk.y, md3.Scale(h, aux))
-	rk.dy = md3.Add(rk.dy, rk.hFDbhat)
+	for c := range n {
+		rk.y[c] += h * (dy[c] + rk.hFbhat[c])
+		rk.dy[c] += rk.hFDbhat[c]
+	}
 	rk.dom += h
+	rk.StepCount++
 	if adaptive {
 		// The error is within tolerance and we may suggest the user use a larger step.
 		// Modify return value to suggest new step.

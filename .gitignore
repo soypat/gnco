@@ -5,6 +5,7 @@ go.work.sum
 *.test
 # Dependency directories after running `go mod vendor`
 vendor/
+claude.md
 
 # Binaries for programs and plugins
 *.elf
@@ -31,6 +32,7 @@ local
 *.cov
 
 # Log files and common data formats.
+*.txt
 *.log
 *.Log
 *.LOG

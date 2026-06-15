@@ -4,19 +4,21 @@ import (
 	"math"
 
 	"github.com/soypat/geometry/md3"
+	"github.com/soypat/gnco/cosmos"
 )
 
 // Coordinates represents location-related operations in geographic and
-// World-fixed reference frames.
+// body-fixed reference frames.
 type Coordinates interface {
 	// AGravG returns gravity acceleration in geographic coordinates.
 	AGravG() md3.Vec
-	// TGE returns the transform from geographic to World-fixed frame.
+	// TGE returns the transform from geographic to body-fixed frame.
 	TGE() md3.Mat3
-	// SetFromEarthFixedCoords updates coordinates from an World-fixed vector.
-	SetFromEarthFixedCoords(SBIE md3.Vec, epochTime float64)
-	// World returns the associated world model.
-	World() *World
+	// SetFromEarthFixedCoords updates coordinates from a planet-centered
+	// inertial (ECI) vector at the given epoch.
+	SetFromEarthFixedCoords(SBI md3.Vec, epoch cosmos.Epoch)
+	// Body returns the associated celestial body model.
+	Body() *cosmos.Body
 }
 
 // Compile-time guarantee of interface implementation.
@@ -40,7 +42,7 @@ type GeocentricCoords struct {
 	// Points at a distance of Rearth from center
 	// of earth have elevation=0. HASL=Elev-seaLevelHeight
 	Elev float64
-	w    *World
+	w    *cosmos.Body
 }
 
 // Geodesic as ellipsoidal coordinates using geodetic latitude, longitude, and elevation using WGS84 ellipsoidal model.
@@ -59,42 +61,48 @@ func (g GeocentricCoords) Degrees() (longitude, latitude float64) {
 }
 
 // InertialCoords returns the planet-centered absolute inertial frame (ECI) of reference coordinates. See Earth-centered inertial.
-func (g GeocentricCoords) InertialCoords(epochTime float64) (sBII md3.Vec, TGI md3.Mat3) {
+func (g GeocentricCoords) InertialCoords(epochTime cosmos.Epoch) (sBII md3.Vec, TGI md3.Mat3) {
 	TEI := g.w.TEI(epochTime)
 	TGE := g.TGE()
 	TGI = md3.MulMat3(TGE, TEI)
-	sBIE := g.EarthFixedCoords(epochTime)
+	sBIE := g.EarthFixedCoords()
+	// sBIE is body-fixed (ECEF); TEI maps inertial→body-fixed, so its transpose
+	// rotates the body-fixed vector back into the inertial frame.
 	sBII = md3.MulMatVecTrans(TEI, sBIE)
 	return sBII, TGI
 }
 
-// EarthFixedCoords returns the planet-centerd, planet-fixed (ECEF) frame of reference coordinates. These rotate with the planet. See Earth-centered, earth fixed.
-func (g GeocentricCoords) EarthFixedCoords(epochTime float64) (sBIE md3.Vec) {
-	slon, clon := math.Sincos(g.Long + g.w.rotation*epochTime)
+// EarthFixedCoords returns the planet-centered, planet-fixed (ECEF) frame of reference coordinates. These rotate with the planet. See Earth-centered, earth fixed.
+//
+// The body-fixed position depends only on the stored Long/Lat/Elev and is therefore
+// time-independent; the epoch dependence lives entirely in [GeocentricCoords.InertialCoords].
+func (g GeocentricCoords) EarthFixedCoords() (sBIE md3.Vec) {
+	slon, clon := math.Sincos(g.Long)
 	slat, clat := math.Sincos(g.Lat)
 	sBIE.X = clat * clon
 	sBIE.Y = clat * slon
 	sBIE.Z = slat
-	radius := g.Elev + g.w.radius
+	radius := g.Elev + g.w.Radius()
 	return md3.Scale(radius, sBIE)
 }
 
-// SetFromEarthFixedCoords updates coordinates from an World-fixed vector. Implements [Coordinates].
-func (g *GeocentricCoords) SetFromEarthFixedCoords(sBIE md3.Vec, epochTime float64) {
+// SetFromEarthFixedCoords updates coordinates from a planet-centered inertial (ECI)
+// vector at the given epoch. Implements [Coordinates].
+func (g *GeocentricCoords) SetFromEarthFixedCoords(sBII md3.Vec, epochTime cosmos.Epoch) {
 	if g.w == nil {
-		panic("nil world")
+		panic("nil body")
 	}
-	*g = g.w.GeocentricFromEarthFixedCoords(sBIE, epochTime)
+	*g = NewGeocentricFromEarthFixed(g.w, sBII, epochTime)
 }
 
-// World returns the reference [World] model used by these coordinates.
-func (g GeocentricCoords) World() *World { return g.w }
+// Body returns the reference [cosmos.Body] model used by these coordinates.
+func (g GeocentricCoords) Body() *cosmos.Body { return g.w }
 
 // TGI returns the transform matrix from geographic coordinates to the
 // planet-centered inertial frame at the given epoch time.
 //
 //	TGI = TGE*TEI
-func (g GeocentricCoords) TGI(epochTime float64) md3.Mat3 {
+func (g GeocentricCoords) TGI(epochTime cosmos.Epoch) md3.Mat3 {
 	TEI := g.w.TEI(epochTime)
 	TGE := g.TGE()
 	TGI := md3.MulMat3(TGE, TEI)
@@ -113,9 +121,9 @@ func (g GeocentricCoords) TGE() md3.Mat3 {
 	)
 }
 
-// Radius returns the distance from World center to geocentric coordinate [m].
+// Radius returns the distance from body center to geocentric coordinate [m].
 func (g GeocentricCoords) Radius() float64 {
-	return g.w.radius + g.Elev
+	return g.w.Radius() + g.Elev
 }
 
 // HASL returns height above sea level [m].
@@ -126,7 +134,7 @@ func (g GeocentricCoords) HASL() float64 {
 // AGravG returns gravity acceleration in geographic coordinates. [m.s^-2]
 func (g GeocentricCoords) AGravG() (gravityVec md3.Vec) {
 	dbi := g.Radius()
-	gravityVec.Z = g.w.G() / (dbi * dbi)
+	gravityVec.Z = g.w.Mu() / (dbi * dbi)
 	return gravityVec
 }
 
@@ -139,22 +147,24 @@ func (g GeodesicCoords) AGravG() (gravityVec md3.Vec) {
 	const dum2 = 3 * sqrtHalf
 	w := g.c.w
 	dbi := g.c.Radius()
-	dum1 := w.G() / (dbi * dbi)
-	dum3 := w.semiMajorAxis / dbi
+	dum1 := w.Mu() / (dbi * dbi)
+	dum3 := w.SemiMajorAxis() / dbi
 	dum3 *= dum3 // square it, much faster than Pow
+	c20 := w.C20()
 	sinlat, coslat := math.Sincos(g.c.Lat)
-	gravityVec.X = -dum1 * dum2 * w.c20 * dum3 * sinlat * coslat
-	gravityVec.Z = dum1 * (1 + dum2/2*w.c20*dum3*(3*sinlat*sinlat-1))
+	gravityVec.X = -dum1 * dum2 * c20 * dum3 * sinlat * coslat
+	gravityVec.Z = dum1 * (1 + dum2/2*c20*dum3*(3*sinlat*sinlat-1))
 	return gravityVec
 }
 
-// SetFromEarthFixedCoords updates coordinates from an World-fixed vector. Implements [Coordinates].
-func (g *GeodesicCoords) SetFromEarthFixedCoords(sBIE md3.Vec, epochTime float64) {
-	g.c.SetFromEarthFixedCoords(sBIE, epochTime)
+// SetFromEarthFixedCoords updates coordinates from a planet-centered inertial (ECI)
+// vector at the given epoch. Implements [Coordinates].
+func (g *GeodesicCoords) SetFromEarthFixedCoords(sBII md3.Vec, epochTime cosmos.Epoch) {
+	g.c.SetFromEarthFixedCoords(sBII, epochTime)
 }
 
-// World returns the reference [World] model used by these coordinates.
-func (g GeodesicCoords) World() *World { return g.c.w }
+// Body returns the reference [cosmos.Body] model used by these coordinates.
+func (g GeodesicCoords) Body() *cosmos.Body { return g.c.w }
 
 // HASL returns height above sea level [m].
 func (g GeodesicCoords) HASL() float64 { return g.c.HASL() }
@@ -181,28 +191,35 @@ func clampLongLat(rad float64) float64 {
 	return rad
 }
 
-// asinlong returns the longitude given x and y SBII coordinates
-// without taking into account epoch time.
-// TODO(pato) This function can be optimized.
-func asinlong(y, x float64) float64 {
-	long := math.Asin(y / math.Hypot(x, y))
-	switch {
-	// case x >= 0 && y >= 0:
-	// Quadrant I.
-	// Do nothing.
-	case x < 0 && y >= 0:
-		// Quadrant II.
-		long = math.Pi - long
-
-	case x < 0 && y < 0: // TODO merge this with above case clause to optimize after writing tests.
-		// Quadrant III.
-		long = math.Pi - long
-
-	case x >= 0 && y < 0:
-		// Quadrant IV.
-		long = 2*math.Pi + long
+// NewGeocentricFromDegrees builds geocentric coordinates for body b from a
+// body-fixed longitude and latitude in degrees and an elevation above the body
+// reference sphere [m].
+func NewGeocentricFromDegrees(b *cosmos.Body, longDeg, latDeg, elevationAboveRefSphere float64) GeocentricCoords {
+	if elevationAboveRefSphere < -b.Radius() {
+		panic("bad elevation")
 	}
-	return long
+	return GeocentricCoords{
+		Long: clampLongLat(math.Pi / 180. * longDeg),
+		Lat:  clampLongLat(math.Pi / 180. * latDeg),
+		Elev: elevationAboveRefSphere,
+		w:    b,
+	}
+}
+
+// NewGeocentricFromEarthFixed builds geocentric coordinates for body b from a
+// planet-centered inertial (ECI) vector at epoch e. The inertial vector is
+// rotated into the body-fixed frame via b.TEI before extracting longitude,
+// latitude and elevation, so the conversion is consistent with the full
+// IAU-76/FK5 reduction used everywhere else.
+func NewGeocentricFromEarthFixed(b *cosmos.Body, sBII md3.Vec, e cosmos.Epoch) GeocentricCoords {
+	sBF := md3.MulMatVec(b.TEI(e), sBII)
+	dbf := md3.Norm(sBF)
+	return GeocentricCoords{
+		Long: clampLongLat(math.Atan2(sBF.Y, sBF.X)),
+		Lat:  math.Asin(sBF.Z / dbf),
+		Elev: dbf - b.Radius(),
+		w:    b,
+	}
 }
 
 func mat3(a, b, c, d, e, f, g, h, i float64) md3.Mat3 {

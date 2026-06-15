@@ -22,3 +22,21 @@ go mod download github.com/soypat/gnco@latest
 ### About the integrator
 The physics integrator used is a state of the art Runge-Kutta-Nyström 12(10) second order integrator and presents very well behaved energy conservation for
 elliptical orbits for very large integration steps in the order of the hundreds of seconds, given no external forces other than gravity are acting.
+
+Below are some oscillator benchmarks for integrators in this project. Notably RKN12(10) has near ULP precision and is far more precise for adaptive stepping compared with RKF7(8) and RK4(5) and converges in about the same amount of wall-clock time as RK7(8) and much faster than RK4(5).
+```
+go test ./internal/ode -bench=. -benchmem
+goos: linux
+goarch: amd64
+pkg: github.com/soypat/gnco/internal/ode
+cpu: 12th Gen Intel(R) Core(TM) i5-12400F
+BenchmarkRK45Step-12                       82034             14125 ns/op               0 B/op          0 allocs/op
+BenchmarkIVP_noadaptivestep/RK4(5)-12   15809316                73.90 ns/op            0 B/op          0 allocs/op
+BenchmarkIVP_noadaptivestep/RKF7(8)-12    6944835               171.5 ns/op             0 B/op          0 allocs/op
+BenchmarkIVP_noadaptivestep/RKN12(10)-12                 4857708               242.5 ns/op             0 B/op          0 allocs/op
+BenchmarkIVP_adaptiveconvergence/RK4(5)-12                 83965             14250 ns/op                 2.581 errY×1e-9                93.00 steps/op         0 B/op          0 allocs/op
+BenchmarkIVP_adaptiveconvergence/RKF7(8)-12                270642              4290 ns/op                 0.6264 errY×1e-9               16.00 steps/op         0 B/op          0 allocs/op
+BenchmarkIVP_adaptiveconvergence/RKN12(10)-12             254018              4570 ns/op                 0.0000001 errY×1e-9            13.00 steps/op         0 B/op          0 allocs/op
+PASS
+ok      github.com/soypat/gnco/internal/ode     8.220s
+```

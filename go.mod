@@ -2,4 +2,4 @@ module github.com/soypat/gnco
 
 go 1.24
 
-require github.com/soypat/geometry v0.0.0-20250627170258-6042697f417b
+require github.com/soypat/geometry v0.0.0-20260614213923-371953e1cce4

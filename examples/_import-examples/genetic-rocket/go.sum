@@ -1,0 +1,6 @@
+github.com/soypat/geometry v0.0.0-20260614155241-3c371d4bfccd h1:hYTxhheRKQR8W/otp/0eEPI6/bOBRayDoniWjTE8Z7g=
+github.com/soypat/geometry v0.0.0-20260614155241-3c371d4bfccd/go.mod h1:8sjIu2Uy3XSHX8MxxCENgMmActBY3KnZa5+c71Gvxp4=
+github.com/soypat/gnco v0.0.0-20260602213441-d42905d3216a h1:4rSAfTSbYJPbCDwZ0vDUrs8gAcW/ZjnJOZJTB1rRLYs=
+github.com/soypat/gnco v0.0.0-20260602213441-d42905d3216a/go.mod h1:N+mZAZ+rPJg3TOv+DwHRhkciEYHYN2kxnPCzD5Owjso=
+github.com/soypat/mu8 v0.8.4 h1:CEdJKDWP0z6tdjavqqU3cqGoKuVrDJmvHatY8bN7/0o=
+github.com/soypat/mu8 v0.8.4/go.mod h1:5AB250CMShwsU2EukxhSee9o9WWt/2swS2yYvP/JDLQ=

@@ -106,7 +106,7 @@ func (F Frame) ToBody(v Orientation, frameVec md3.Vec) md3.Vec {
 //	TVG * v_G = v_V; transpose(TVG) converts V to G.
 //
 // The V-frame x-axis aligns with velocity. Near-vertical motion uses north as azimuth.
-func TVGFromGeographicVelocity(vbg md3.Vec) md3.Mat3 {
+func TVGFromGeographicVelocity(vbg md3.Vec) (TVG md3.Mat3) {
 	vnorm := md3.Norm(vbg)
 	if vnorm == 0 {
 		return md3.IdentityMat3()
@@ -133,4 +133,39 @@ func TVGFromGeographicVelocity(vbg md3.Vec) md3.Mat3 {
 		-vy/hspeed, vx/hspeed, 0,
 		-vz*vx/hspeed, -vz*vy/hspeed, hspeed,
 	)
+}
+
+// GeographicVectorFromElevationAndBearing returns a vector in geographic coordinates
+// pointing in direction given by an elevation and bearing in radians.
+// When obtaining Geographic coordinates bearing can be thought of as North/West/East/South
+// parameter, while the elevation describes whether direction is Up or Down, with
+//
+// Geographic coordinates:
+//
+//	X: North
+//	Y: East // <- TODO this looks wrong...
+//	Z: Center of earth
+//
+// Elevation:
+//
+//	Pi/2: Pointing up.
+//	0: Pointing towards horizon.
+//	-Pi/2: Pointing down.
+//
+// Bearing:
+//
+//	0: Pointing North.
+//	Pi/2: Pointing East.
+//	Pi: Pointing South.
+func GeographicVectorFromElevationAndBearing(elevation, bearing, NormOfVector float64) (dirG md3.Vec) {
+	// See CADAC matcar routine.
+	sine, cose := math.Sincos(elevation)
+	sinb, cosb := math.Sincos(bearing)
+	dirG = md3.Vec{
+		X: cosb * cose,
+		Y: -sinb * cose,
+		Z: -sine,
+	}
+	dirG = md3.Scale(NormOfVector, md3.Unit(dirG)) // TODO: does this need to be normalized before scaling?
+	return dirG
 }

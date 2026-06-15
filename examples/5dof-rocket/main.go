@@ -7,6 +7,8 @@ import (
 
 	"github.com/soypat/geometry/md3"
 	"github.com/soypat/gnco"
+	"github.com/soypat/gnco/cosmos"
+	"github.com/soypat/gnco/physics"
 )
 
 func main() {
@@ -46,10 +48,10 @@ func run() error {
 		T0sea = 288.15 // [K] ISA sea-level temperature
 	)
 
-	earth := gnco.NewEarth()
-	launchSite := earth.GeocentricFromDegrees(-34.6, -58.4, earth.HASLToElevation(25))
+	earth := cosmos.NewEarth()
+	launchSite := gnco.NewGeocentricFromDegrees(earth, -34.6, -58.4, earth.HASLToElevation(25))
 
-	SBI0, TGI0 := launchSite.InertialCoords(0)
+	SBI0, TGI0 := launchSite.InertialCoords(cosmos.EpochFromTT(0))
 
 	// Tiny seed speed so TVGFromGeographicVelocity returns the correct launch-
 	// direction orientation. Bearing is North, elevation 85°.
@@ -65,8 +67,12 @@ func run() error {
 
 	// coords tracks the rocket position; the integrator updates it at every RKN stage.
 	coords := launchSite
-	integrator := gnco.NewPhysicsPointIntegrator(&coords, 0, SBI0, VBI0)
-
+	epoch0 := cosmos.Epoch{} // J2000 anchor; only elapsed time matters here.
+	var integrator physics.PointIntegrator
+	err := integrator.ConfigureCoord(&coords, epoch0, SBI0, VBI0)
+	if err != nil {
+		return err
+	}
 	mass := massWet
 	massFlow := (massWet - massDry) / burnTime
 
@@ -88,7 +94,7 @@ func run() error {
 
 	for t < maxT {
 		hasl := coords.HASL()
-		TGI := coords.TGI(t)
+		TGI := coords.TGI(cosmos.EpochFromTT(t))
 
 		// Earth-relative velocity in geographic frame: VBEG = TGI * (VBI - ω×SBI).
 		// Aero forces and TVG updates use Earth-relative speed, not inertial speed.
@@ -124,9 +130,11 @@ func run() error {
 		}
 
 		accelGeog := md3.MulMatVecTrans(TVG, AFpsV)
-		t, SBI, VBI = integrator.Step(dt, accelGeog)
+		var e cosmos.Epoch
+		e, SBI, VBI = integrator.Step(dt, accelGeog)
+		t = e.Sub(epoch0)
 		// Post-step: integrate geographic displacement and update TVG.
-		newTGI := coords.TGI(t)
+		newTGI := coords.TGI(e)
 		newVBEG := md3.MulMatVec(newTGI, md3.Sub(VBI, md3.Cross(weii, SBI)))
 		sbeg = md3.Add(sbeg, md3.Scale(dt/2, md3.Add(newVBEG, VBEG)))
 		if t > 10 || md3.Norm(sbeg) > rampLength {
