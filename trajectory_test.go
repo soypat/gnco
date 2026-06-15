@@ -9,6 +9,10 @@ import (
 	"github.com/soypat/gnco/orbits"
 )
 
+// earthMu is Earth's gravitational parameter [m³/s²], used as a generic central
+// body parameter for the orbit-math tests below.
+const earthMu = 3.986004415e14
+
 // fixedSun is a stationary Sun ephemeris for geometry tests.
 type fixedSun struct{ p md3.Vec }
 

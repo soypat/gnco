@@ -39,7 +39,7 @@ type coordAccelSource struct {
 
 func (s *coordAccelSource) AccelInertial(sbi md3.Vec, epoch cosmos.Epoch) md3.Vec {
 	coord := s.coord
-	w := coord.World()
+	w := coord.Body()
 	TEI := w.TEI(epoch)
 	coord.SetFromEarthFixedCoords(sbi, epoch)
 	// Calculate TM geographic wrt earth coordinates.
@@ -174,7 +174,7 @@ func (phys *PointIntegrator) accelFast(dst, y []float64, t float64) {
 // stateful: SetFromEarthFixedCoords mutates it, so callers must invoke this
 // sequentially (one ODE stage at a time).
 func gravInertial(coord gnco.Coordinates, sbi md3.Vec, epoch cosmos.Epoch) md3.Vec {
-	w := coord.World()
+	w := coord.Body()
 	TEI := w.TEI(epoch)
 	coord.SetFromEarthFixedCoords(sbi, epoch)
 	// TM of geographic wrt inertial coordinates.

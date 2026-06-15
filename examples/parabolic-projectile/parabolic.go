@@ -19,10 +19,10 @@ func main() {
 }
 
 func run() error {
-	// The "World" type provides fixed-frame facilities as well as
+	// The cosmos.Body type provides fixed-frame facilities as well as
 	// simple or geodesic gravity calculation.
-	earth := gnco.NewEarth()
-	buenosAires := earth.GeocentricFromDegrees(34.6, 58.4, earth.HASLToElevation(25))
+	earth := cosmos.NewEarth()
+	buenosAires := gnco.NewGeocentricFromDegrees(earth, 34.6, 58.4, earth.HASLToElevation(25))
 	// We declare our initial conditions for the integrator.
 	// Note we integrate in inertial coordinates to avoid ficticious forces.
 	const (

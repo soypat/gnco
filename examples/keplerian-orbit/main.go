@@ -44,14 +44,14 @@ func run() error {
 		dt          = 300.0 // [s] integration step: 5 minutes
 		nOrbits     = 5
 	)
-	earth := gnco.NewEarth()
+	earth := cosmos.NewEarth()
 	rA := earth.Radius() + earth.HASLToElevation(apogeeHASL)
 	rP := earth.Radius() + earth.HASLToElevation(perigeeHASL)
 	orbit, err := orbits.NewElliptical(rA, rP)
 	if err != nil {
 		return err
 	}
-	mu := earth.G() // gravitational parameter [m³/s²]
+	mu := earth.Mu() // gravitational parameter [m³/s²]
 	T := orbit.Period(mu)
 	E0 := orbit.SpecificEnergy(mu)
 
@@ -62,7 +62,7 @@ func run() error {
 	}
 	SBI0 := md3.Vec{X: rP}
 	VBI0 := md3.Vec{Y: vT}
-	coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
+	coords := gnco.NewGeocentricFromEarthFixed(earth, SBI0, cosmos.EpochFromTT(0))
 	a := 0.5 * (orbit.Apoapsis() + orbit.Periapsis())
 
 	fmt.Println("Keplerian orbit — RKN12(10) energy conservation")

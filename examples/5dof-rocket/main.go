@@ -48,8 +48,8 @@ func run() error {
 		T0sea = 288.15 // [K] ISA sea-level temperature
 	)
 
-	earth := gnco.NewEarth()
-	launchSite := earth.GeocentricFromDegrees(-34.6, -58.4, earth.HASLToElevation(25))
+	earth := cosmos.NewEarth()
+	launchSite := gnco.NewGeocentricFromDegrees(earth, -34.6, -58.4, earth.HASLToElevation(25))
 
 	SBI0, TGI0 := launchSite.InertialCoords(cosmos.EpochFromTT(0))
 
