@@ -19,10 +19,10 @@ func main() {
 }
 
 func run() error {
-	// The "World" type provides fixed-frame facilities as well as
+	// The cosmos.Body type provides fixed-frame facilities as well as
 	// simple or geodesic gravity calculation.
-	earth := gnco.NewEarth()
-	buenosAires := earth.GeocentricFromDegrees(34.6, 58.4, earth.HASLToElevation(25))
+	earth := cosmos.NewEarth()
+	buenosAires := gnco.NewGeocentricFromDegrees(earth, 34.6, 58.4, earth.HASLToElevation(25))
 	// We declare our initial conditions for the integrator.
 	// Note we integrate in inertial coordinates to avoid ficticious forces.
 	const (
@@ -32,7 +32,8 @@ func run() error {
 
 		projectileAngleRad = launchAngleElev * math.Pi / 180 // [rad]
 	)
-	SBI0, TGI := buenosAires.InertialCoords(cosmos.EpochFromTT(t0))
+	epoch0 := cosmos.EpochFromTT(t0)
+	SBI0, TGI := buenosAires.InertialCoords(epoch0)
 	// Calculate the velocity in inertial frame of reference.
 	// We start out with velocity in geographical frame since declaring it
 	// with an elevation angle relative to our horizon makes it easier to reason about.
@@ -50,7 +51,7 @@ func run() error {
 	// so we can omit force/mass calculations.
 	projectileCoords := buenosAires // projectileCoords will store coordinates of our projectile over course of simulation.
 	var integrator physics.PointIntegrator
-	err := integrator.Configure(&projectileCoords, t0, SBI0, VBI0)
+	err := integrator.ConfigureCoord(&projectileCoords, epoch0, SBI0, VBI0)
 	if err != nil {
 		return err
 	}
@@ -62,7 +63,9 @@ func run() error {
 		// No internal acceleration other than coordinate system gravity.
 		// We should get parabolic trajectory.
 		accelGeographical := md3.Vec{X: 0, Y: 0, Z: 0}
-		t, SBI, VBI = integrator.Step(dt, accelGeographical)
+		var e cosmos.Epoch
+		e, SBI, VBI = integrator.Step(dt, accelGeographical)
+		t = e.Sub(epoch0)
 	}
 	simulationDuration := t - t0
 	fmt.Println("total flight duration", simulationDuration, "with final velocity", md3.Norm(VBI))

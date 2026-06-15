@@ -85,17 +85,6 @@ type OrbitPropagator struct {
 	hNext  float64 // suggested next internal step [s]
 }
 
-// forceModelSource adapts a ForceModel anchored at epoch0 into an AccelSource:
-// integration time t maps to absolute epoch epoch0+t, evaluated per stage.
-type forceModelSource struct {
-	fm     *ForceModel
-	epoch0 cosmos.Epoch
-}
-
-func (s forceModelSource) AccelInertial(sbi md3.Vec, epoch cosmos.Epoch) md3.Vec {
-	return s.fm.Accel(sbi, s.epoch0.Add(epoch.SecondsTT()))
-}
-
 // NewOrbitPropagator creates a propagator with initial inertial position
 // rBI [m] and velocity vBI [m/s] at absolute epoch epoch0.
 func NewOrbitPropagator(fm *ForceModel, epoch0 cosmos.Epoch, rBI, vBI md3.Vec, cfg PropagatorConfig) (*OrbitPropagator, error) {
@@ -111,11 +100,13 @@ func NewOrbitPropagator(fm *ForceModel, epoch0 cosmos.Epoch, rBI, vBI md3.Vec, c
 		fm:     fm,
 		epoch0: epoch0,
 	}
-	err := p.integ.ConfigureSource(forceModelSource{fm: fm, epoch0: epoch0}.AccelInertial, ode.Parameters{
+	// ForceModel.Accel matches AccelSource; the integrator anchors at epoch0 and
+	// hands each stage the absolute epoch, so no re-anchoring wrapper is needed.
+	err := p.integ.Configure(fm.Accel, ode.Parameters{
 		RelTolerance: cfg.Accuracy,
 		MinStep:      cfg.MinStep,
 		MaxStep:      cfg.MaxStep,
-	}, 0, rBI, vBI)
+	}, epoch0, rBI, vBI)
 	if err != nil {
 		return nil, err
 	}
@@ -129,14 +120,13 @@ func NewOrbitPropagator(fm *ForceModel, epoch0 cosmos.Epoch, rBI, vBI md3.Vec, c
 // State returns the current absolute epoch and inertial position [m] and
 // velocity [m/s].
 func (p *OrbitPropagator) State() (e cosmos.Epoch, r, v md3.Vec) {
-	t, r, v := p.integ.State()
-	return p.epoch0.Add(t), r, v
+	return p.integ.State()
 }
 
 // Elapsed returns seconds integrated since the initial epoch.
 func (p *OrbitPropagator) Elapsed() float64 {
-	t, _, _ := p.integ.State()
-	return t
+	e, _, _ := p.integ.State()
+	return e.Sub(p.epoch0)
 }
 
 // Step advances the state by exactly dt seconds, internally substepping with

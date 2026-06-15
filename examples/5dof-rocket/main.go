@@ -48,8 +48,8 @@ func run() error {
 		T0sea = 288.15 // [K] ISA sea-level temperature
 	)
 
-	earth := gnco.NewEarth()
-	launchSite := earth.GeocentricFromDegrees(-34.6, -58.4, earth.HASLToElevation(25))
+	earth := cosmos.NewEarth()
+	launchSite := gnco.NewGeocentricFromDegrees(earth, -34.6, -58.4, earth.HASLToElevation(25))
 
 	SBI0, TGI0 := launchSite.InertialCoords(cosmos.EpochFromTT(0))
 
@@ -67,8 +67,9 @@ func run() error {
 
 	// coords tracks the rocket position; the integrator updates it at every RKN stage.
 	coords := launchSite
+	epoch0 := cosmos.Epoch{} // J2000 anchor; only elapsed time matters here.
 	var integrator physics.PointIntegrator
-	err := integrator.Configure(&coords, 0, SBI0, VBI0)
+	err := integrator.ConfigureCoord(&coords, epoch0, SBI0, VBI0)
 	if err != nil {
 		return err
 	}
@@ -129,9 +130,11 @@ func run() error {
 		}
 
 		accelGeog := md3.MulMatVecTrans(TVG, AFpsV)
-		t, SBI, VBI = integrator.Step(dt, accelGeog)
+		var e cosmos.Epoch
+		e, SBI, VBI = integrator.Step(dt, accelGeog)
+		t = e.Sub(epoch0)
 		// Post-step: integrate geographic displacement and update TVG.
-		newTGI := coords.TGI(cosmos.EpochFromTT(t))
+		newTGI := coords.TGI(e)
 		newVBEG := md3.MulMatVec(newTGI, md3.Sub(VBI, md3.Cross(weii, SBI)))
 		sbeg = md3.Add(sbeg, md3.Scale(dt/2, md3.Add(newVBEG, VBEG)))
 		if t > 10 || md3.Norm(sbeg) > rampLength {

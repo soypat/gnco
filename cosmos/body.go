@@ -9,9 +9,8 @@ import (
 )
 
 // Body describes a celestial body's physical constants for orbit propagation.
-// Unlike gnco.World, Body carries the gravitational parameter mu directly since
-// high-precision gravity models (JGM-2, GMAT's Earth.Mu) do not factor cleanly
-// into G*mass.
+// Body carries the gravitational parameter mu directly since high-precision
+// gravity models (JGM-2, GMAT's Earth.Mu) do not factor cleanly into G*mass.
 type Body struct {
 	name           string
 	mu             float64 // gravitational parameter GM [m³/s²]
@@ -90,6 +89,34 @@ func (b *Body) J3() float64 { return b.j3 }
 
 // J4 returns the SGP4 un-normalised fourth zonal harmonic.
 func (b *Body) J4() float64 { return b.j4 }
+
+// seaLevelHeight is the height of sea level above the body reference sphere [m].
+func (b *Body) seaLevelHeight() float64 {
+	return b.seaLevelRadius - b.radius
+}
+
+// HASLToElevation converts a height above sea level [m] into an elevation above
+// the body reference sphere [m]. It is the inverse of [Body.HASL].
+func (b *Body) HASLToElevation(hasl float64) float64 {
+	if b.seaLevelRadius == 0 {
+		return hasl
+	}
+	return b.seaLevelHeight() + hasl
+}
+
+// HASL returns height above sea level [m] for an elevation above the reference sphere.
+// It is the inverse of [Body.HASLToElevation].
+func (b *Body) HASL(elev float64) float64 {
+	if b.seaLevelRadius == 0 {
+		return elev
+	}
+	return elev - b.seaLevelHeight()
+}
+
+// Day returns the amount of seconds in a sidereal day.
+func (b *Body) Day() float64 {
+	return 2 * math.Pi / b.rotation
+}
 
 // TEI returns the [T]^{EI} body-fixed ← inertial (MJ2000Eq) rotation tensor
 // at epoch e using the IAU-76/FK5 reduction (Vallado sec. 3.7), as GMAT does

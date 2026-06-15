@@ -10,6 +10,7 @@ import (
 	"github.com/soypat/gnco/cosmos"
 	"github.com/soypat/gnco/orbits"
 	"github.com/soypat/gnco/physics"
+	"github.com/soypat/gnco/physics/ode"
 )
 
 // tvgRow extracts row n of a TVG matrix via its transpose action on a basis vector.
@@ -104,7 +105,7 @@ func TestTVGFromGeographicVelocity(t *testing.T) {
 }
 
 func TestWorldHASL(t *testing.T) {
-	earth := gnco.NewEarth()
+	earth := cosmos.NewEarth()
 
 	// Round-trip: HASL(HASLToElevation(h)) == h for representative altitudes.
 	for _, h := range []float64{0, 100, 10_000, 400_000, 35_786_000} {
@@ -125,72 +126,32 @@ func TestWorldHASL(t *testing.T) {
 	}
 }
 
+// TestTEI checks that the full IAU-76/FK5 reduction returned by cosmos.Body.TEI
+// is a proper rotation (orthonormal, right-handed) over a range of epochs. Its
+// detailed numerical agreement with GMAT is validated separately by the
+// solar-power example against its golden files.
 func TestTEI(t *testing.T) {
 	const tol = 1e-12
-	earth := gnco.NewEarth()
+	earth := cosmos.NewEarth()
 
-	t.Run("identity at t=0", func(t *testing.T) {
-		tei := earth.TEI(cosmos.EpochFromTT(0))
+	for _, tt := range []float64{0, 100, 3600, 86400, earth.Day()} {
+		tei := earth.TEI(cosmos.EpochFromTT(tt))
+		checkTVGOrthonormal(t, tei, tol)
+		// TEI * TEI^T = I: check each basis vector round-trips.
 		for _, e := range []md3.Vec{{X: 1}, {Y: 1}, {Z: 1}} {
-			got := md3.MulMatVec(tei, e)
+			v := md3.MulMatVecTrans(tei, e)
+			got := md3.MulMatVec(tei, v)
 			if d := md3.Norm(md3.Sub(got, e)); d > tol {
-				t.Errorf("TEI(0)*%v = %v, want identity", e, got)
+				t.Errorf("TEI(%g)*TEI^T*%v = %v, want %v", tt, e, got, e)
 			}
 		}
-	})
-
-	t.Run("identity after one sidereal day", func(t *testing.T) {
-		tei := earth.TEI(cosmos.EpochFromTT(earth.Day()))
-		for _, e := range []md3.Vec{{X: 1}, {Y: 1}, {Z: 1}} {
-			got := md3.MulMatVec(tei, e)
-			if d := md3.Norm(md3.Sub(got, e)); d > tol {
-				t.Errorf("TEI(day)*%v = %v, want identity", e, got)
-			}
-		}
-	})
-
-	// After a quarter rotation, the ECEF frame has rotated π/2 CCW relative to ECI.
-	// An ECI +X point is therefore at ECEF -Y (Earth has moved past it).
-	t.Run("quarter rotation ECI+X maps to ECEF -Y", func(t *testing.T) {
-		quarterDay := math.Pi / 2 / earth.Rotation()
-		tei := earth.TEI(cosmos.EpochFromTT(quarterDay))
-		got := md3.MulMatVec(tei, md3.Vec{X: 1})
-		want := md3.Vec{Y: -1}
-		if d := md3.Norm(md3.Sub(got, want)); d > tol {
-			t.Errorf("TEI(quarterDay)*{X:1} = %v, want %v", got, want)
-		}
-	})
-
-	// Inverse: an ECEF +X surface point appears at ECI +Y after a quarter rotation.
-	t.Run("quarter rotation ECEF+X maps to ECI +Y", func(t *testing.T) {
-		quarterDay := math.Pi / 2 / earth.Rotation()
-		tei := earth.TEI(cosmos.EpochFromTT(quarterDay))
-		got := md3.MulMatVecTrans(tei, md3.Vec{X: 1})
-		want := md3.Vec{Y: 1}
-		if d := md3.Norm(md3.Sub(got, want)); d > tol {
-			t.Errorf("TEI(quarterDay)^T*{X:1} = %v, want %v", got, want)
-		}
-	})
-
-	t.Run("orthonormal at various times", func(t *testing.T) {
-		for _, tt := range []float64{0, 100, 3600, 86400} {
-			tei := earth.TEI(cosmos.EpochFromTT(tt))
-			// TEI * TEI^T = I: check each basis vector round-trips.
-			for _, e := range []md3.Vec{{X: 1}, {Y: 1}, {Z: 1}} {
-				v := md3.MulMatVecTrans(tei, e)
-				got := md3.MulMatVec(tei, v)
-				if d := md3.Norm(md3.Sub(got, e)); d > tol {
-					t.Errorf("TEI(%g)*TEI^T*%v = %v, want %v", tt, e, got, e)
-				}
-			}
-		}
-	})
+	}
 }
 
 func TestGeocentricECIRoundTrip(t *testing.T) {
 	const angTol = 1e-10 // rad (~1 mm on Earth's surface)
 	const elevTol = 1e-3 // m
-	earth := gnco.NewEarth()
+	earth := cosmos.NewEarth()
 
 	cases := []struct {
 		name      string
@@ -208,11 +169,11 @@ func TestGeocentricECIRoundTrip(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g := earth.GeocentricFromDegrees(tc.longDeg, tc.latDeg, earth.HASLToElevation(tc.hasl))
-			// EarthFixedCoords returns the ECI position of this surface-fixed point at time t.
-			sBII := g.EarthFixedCoords(cosmos.EpochFromTT(tc.epochTime))
-			// GeocentricFromEarthFixedCoords inverts: given ECI position + epoch, recover ECEF coords.
-			g2 := earth.GeocentricFromEarthFixedCoords(sBII, cosmos.EpochFromTT(tc.epochTime))
+			g := gnco.NewGeocentricFromDegrees(earth, tc.longDeg, tc.latDeg, earth.HASLToElevation(tc.hasl))
+			// InertialCoords returns the ECI position of this surface-fixed point at time t.
+			sBII, _ := g.InertialCoords(cosmos.EpochFromTT(tc.epochTime))
+			// NewGeocentricFromEarthFixed inverts: given ECI position + epoch, recover ECEF coords.
+			g2 := gnco.NewGeocentricFromEarthFixed(earth, sBII, cosmos.EpochFromTT(tc.epochTime))
 			if d := math.Abs(g2.Long - g.Long); d > angTol {
 				t.Errorf("Long round-trip: got %g, want %g (diff %g)", g2.Long, g.Long, d)
 			}
@@ -230,13 +191,13 @@ func TestGeocentricECIRoundTrip(t *testing.T) {
 // isotropic inertia tensor keeps its body-frame angular velocity constant and
 // its attitude quaternion unit-normalized.
 func TestRigidBodyTorqueFreeSymmetric(t *testing.T) {
-	earth := gnco.NewEarth()
+	earth := cosmos.NewEarth()
 	SBI0 := md3.Vec{X: earth.Radius() + 500e3}
-	coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
+	coords := gnco.NewGeocentricFromEarthFixed(earth, SBI0, cosmos.EpochFromTT(0))
 	omega0 := md3.Vec{X: 0.1, Y: 0.2, Z: -0.05}
 	I := md3.Diagonal3(10, 10, 10) // isotropic
 	var rb physics.RigidBodyIntegrator
-	rb.Configure(&coords, 0, SBI0, md3.Vec{}, md3.QuatIdent(), omega0, 100, I)
+	rb.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, md3.Vec{}, md3.QuatIdent(), omega0, 100, I)
 	const dt = 0.1
 	var maxOmegaErr, maxQErr float64
 	for i := 0; i < 3000; i++ {
@@ -262,13 +223,13 @@ func TestRigidBodyTorqueFreeSymmetric(t *testing.T) {
 // conserved in both magnitude and direction, and rotational kinetic energy
 // ½ω·Iω is conserved (the classic polhode test).
 func TestRigidBodyTorqueFreeAsymmetric(t *testing.T) {
-	earth := gnco.NewEarth()
+	earth := cosmos.NewEarth()
 	SBI0 := md3.Vec{X: earth.Radius() + 500e3}
-	coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
+	coords := gnco.NewGeocentricFromEarthFixed(earth, SBI0, cosmos.EpochFromTT(0))
 	omega0 := md3.Vec{X: 0.3, Y: 0.2, Z: 0.15}
 	I := md3.Diagonal3(1.0, 2.5, 4.0) // distinct principal moments → tumbling
 	var rb physics.RigidBodyIntegrator
-	rb.Configure(&coords, 0, SBI0, md3.Vec{}, md3.QuatIdent(), omega0, 100, I)
+	rb.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, md3.Vec{}, md3.QuatIdent(), omega0, 100, I)
 
 	// Initial invariants.
 	angMom := func(q md3.Quat, w md3.Vec) md3.Vec {
@@ -318,8 +279,8 @@ func TestRigidBodyTranslationEnergy(t *testing.T) {
 		dt          = 60.0
 		nOrbits     = 5
 	)
-	earth := gnco.NewEarth()
-	mu := earth.G()
+	earth := cosmos.NewEarth()
+	mu := earth.Mu()
 	rP := earth.Radius() + earth.HASLToElevation(perigeeHASL)
 	rA := earth.Radius() + earth.HASLToElevation(apogeeHASL)
 	orbit, err := orbits.NewElliptical(rA, rP)
@@ -332,12 +293,13 @@ func TestRigidBodyTranslationEnergy(t *testing.T) {
 	E0 := orbit.SpecificEnergy(mu)
 	T := orbit.Period(mu)
 
-	coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
+	coords := gnco.NewGeocentricFromEarthFixed(earth, SBI0, cosmos.EpochFromTT(0))
 	I := md3.Diagonal3(1, 2, 3)
 	var rb physics.RigidBodyIntegrator
-	rb.Configure(&coords, 0, SBI0, VBI0, md3.QuatIdent(), md3.Vec{X: 0.1}, 100, I)
+	rb.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, VBI0, md3.QuatIdent(), md3.Vec{X: 0.1}, 100, I)
 
-	tt, SBI, VBI, q, _ := rb.State()
+	ep, SBI, VBI, q, _ := rb.State()
+	tt := ep.Sub(cosmos.Epoch{})
 	var maxErrE, maxQErr float64
 	for tt < float64(nOrbits)*T {
 		r, v := md3.Norm(SBI), md3.Norm(VBI)
@@ -348,7 +310,8 @@ func TestRigidBodyTranslationEnergy(t *testing.T) {
 		if e := math.Abs(q.Norm() - 1); e > maxQErr {
 			maxQErr = e
 		}
-		tt, SBI, VBI, q, _ = rb.Step(dt, md3.Vec{}, md3.Vec{})
+		ep, SBI, VBI, q, _ = rb.Step(dt, md3.Vec{}, md3.Vec{})
+		tt = ep.Sub(cosmos.Epoch{})
 	}
 	const energyTol = 1e-11
 	if maxErrE > energyTol {
@@ -360,6 +323,53 @@ func TestRigidBodyTranslationEnergy(t *testing.T) {
 	t.Logf("max |ΔE/E₀|=%.2e  max|‖q‖-1|=%.2e", maxErrE, maxQErr)
 }
 
+// TestRigidBodyWrenchSource exercises the general Configure path with a custom
+// WrenchSource (no gnco.Coordinates). A constant body-frame torque about the
+// body x-axis, with diagonal inertia and ω initially aligned with x, gives no
+// gyroscopic coupling (ω×Iω = 0), so the body angular velocity grows linearly:
+// ωx(t) = (τx/Ix)·t. This validates per-stage source evaluation, the non-coord
+// path, and adaptive substepping.
+func TestRigidBodyWrenchSource(t *testing.T) {
+	I := md3.Diagonal3(2, 3, 4)
+	const tauX = 0.6
+	wd := tauX / 2 // expected ω̇x = τx/Ix
+
+	// Source ignores state: zero force (no gravity), constant body torque about x.
+	src := func(st physics.RigidState, e cosmos.Epoch) (force, torque md3.Vec) {
+		return md3.Vec{}, md3.Vec{X: tauX}
+	}
+
+	// Adaptive substepping (absolute tolerance, so the error scale is non-zero
+	// even with a zero translational state). MaxStep < dt forces several substeps
+	// per Step.
+	var rb physics.RigidBodyIntegrator
+	err := rb.Configure(src, ode.Parameters{AbsTolerance: 1e-9, MinStep: 1e-3, MaxStep: 2},
+		cosmos.Epoch{}, md3.Vec{}, md3.Vec{}, md3.QuatIdent(), md3.Vec{}, 100, I)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const dt = 2.0
+	const nSteps = 5
+	var maxErr float64
+	for i := 1; i <= nSteps; i++ {
+		_, _, _, _, w := rb.Step(dt, md3.Vec{}, md3.Vec{})
+		tElapsed := float64(i) * dt
+		want := wd * tElapsed
+		// ω must stay on the x-axis (no coupling) and match the analytic value.
+		if e := math.Abs(w.X-want) / want; e > maxErr {
+			maxErr = e
+		}
+		if off := math.Hypot(w.Y, w.Z); off > 1e-9 {
+			t.Errorf("step %d: ω left the x-axis: |(ωy,ωz)|=%.2e", i, off)
+		}
+	}
+	if maxErr > 1e-9 {
+		t.Errorf("ωx relative error %.2e exceeds 1e-9 (want linear spin-up τx/Ix)", maxErr)
+	}
+	t.Logf("max ωx rel err=%.2e", maxErr)
+}
+
 func TestPhysicsKeplerianEnergy(t *testing.T) {
 	const (
 		perigeeHASL = 400e3 // m
@@ -368,8 +378,8 @@ func TestPhysicsKeplerianEnergy(t *testing.T) {
 		nOrbits     = 5
 		energyTol   = 1.5e-14
 	)
-	earth := gnco.NewEarth()
-	mu := earth.G()
+	earth := cosmos.NewEarth()
+	mu := earth.Mu()
 	rP := earth.Radius() + earth.HASLToElevation(perigeeHASL)
 	rA := earth.Radius() + earth.HASLToElevation(apogeeHASL)
 	orbit, err := orbits.NewElliptical(rA, rP)
@@ -383,11 +393,12 @@ func TestPhysicsKeplerianEnergy(t *testing.T) {
 	E0 := orbit.SpecificEnergy(mu)
 	T := orbit.Period(mu)
 
-	coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
+	coords := gnco.NewGeocentricFromEarthFixed(earth, SBI0, cosmos.EpochFromTT(0))
 	var integrator physics.PointIntegrator
-	integrator.Configure(&coords, 0, SBI0, VBI0)
+	integrator.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, VBI0)
 
-	tt, SBI, VBI := integrator.State()
+	ep, SBI, VBI := integrator.State()
+	tt := ep.Sub(cosmos.Epoch{})
 	var maxErrE float64
 	for tt < float64(nOrbits)*T {
 		r := md3.Norm(SBI)
@@ -396,7 +407,8 @@ func TestPhysicsKeplerianEnergy(t *testing.T) {
 		if errE := math.Abs((E - E0) / E0); errE > maxErrE {
 			maxErrE = errE
 		}
-		tt, SBI, VBI = integrator.Step(dt, md3.Vec{})
+		ep, SBI, VBI = integrator.Step(dt, md3.Vec{})
+		tt = ep.Sub(cosmos.Epoch{})
 	}
 	if maxErrE > energyTol {
 		t.Errorf("max |ΔE/E₀| = %.2e over %d orbits, want < %.2e", maxErrE, nOrbits, energyTol)
@@ -404,10 +416,10 @@ func TestPhysicsKeplerianEnergy(t *testing.T) {
 }
 
 func TestCoordsHASL(t *testing.T) {
-	earth := gnco.NewEarth()
+	earth := cosmos.NewEarth()
 
 	for _, hasl := range []float64{0, 100, 10_000, 400_000} {
-		c := earth.GeocentricFromDegrees(45, 90, earth.HASLToElevation(hasl))
+		c := gnco.NewGeocentricFromDegrees(earth, 45, 90, earth.HASLToElevation(hasl))
 
 		// GeocentricCoords.HASL
 		if got := c.HASL(); !md1.EqualWithinAbs(got, hasl, 1e-6) {
@@ -427,8 +439,8 @@ func BenchmarkPhysicsPointIntegrator(b *testing.B) {
 		apogeeHASL  = 1000e3
 		dt          = 100.0
 	)
-	earth := gnco.NewEarth()
-	mu := earth.G()
+	earth := cosmos.NewEarth()
+	mu := earth.Mu()
 	rP := earth.Radius() + earth.HASLToElevation(perigeeHASL)
 	rA := earth.Radius() + earth.HASLToElevation(apogeeHASL)
 	orbit, err := orbits.NewElliptical(rA, rP)
@@ -441,9 +453,9 @@ func BenchmarkPhysicsPointIntegrator(b *testing.B) {
 	E0 := orbit.SpecificEnergy(mu)
 
 	b.Run("Step", func(b *testing.B) {
-		coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
+		coords := gnco.NewGeocentricFromEarthFixed(earth, SBI0, cosmos.EpochFromTT(0))
 		var integrator physics.PointIntegrator
-		integrator.Configure(&coords, 0, SBI0, VBI0)
+		integrator.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, VBI0)
 		var maxErrE float64
 		for b.Loop() {
 			_, SBI, VBI := integrator.Step(dt, md3.Vec{})
@@ -456,9 +468,9 @@ func BenchmarkPhysicsPointIntegrator(b *testing.B) {
 		b.ReportMetric(maxErrE, "|ΔE/E₀|")
 	})
 	b.Run("StepFast", func(b *testing.B) {
-		coords := earth.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
+		coords := gnco.NewGeocentricFromEarthFixed(earth, SBI0, cosmos.EpochFromTT(0))
 		var integrator physics.PointIntegrator
-		integrator.Configure(&coords, 0, SBI0, VBI0)
+		integrator.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, VBI0)
 		var maxErrE float64
 		for b.Loop() {
 			_, SBI, VBI := integrator.StepFast(dt, md3.Vec{})
@@ -485,8 +497,8 @@ func TestPhysicsPointIntegrator(t *testing.T) {
 		velToleranceRKN = 1e-7 // [m/s]
 		velToleranceDPA = 1e-4 // [m/s]
 	)
-	world := gnco.NewEarth()
-	gravParam := world.G()
+	world := cosmos.NewEarth()
+	gravParam := world.Mu()
 	rEarth := world.Radius()
 
 	orbCases := []struct {
@@ -513,13 +525,13 @@ func TestPhysicsPointIntegrator(t *testing.T) {
 
 			for _, ic := range []struct {
 				name   string
-				stepFn func(*physics.PointIntegrator, float64) (float64, md3.Vec, md3.Vec)
+				stepFn func(*physics.PointIntegrator, float64) (cosmos.Epoch, md3.Vec, md3.Vec)
 				posTol float64
 				velTol float64
 			}{
 				{
 					name: "Step",
-					stepFn: func(ig *physics.PointIntegrator, h float64) (float64, md3.Vec, md3.Vec) {
+					stepFn: func(ig *physics.PointIntegrator, h float64) (cosmos.Epoch, md3.Vec, md3.Vec) {
 						return ig.Step(h, md3.Vec{})
 					},
 					posTol: posToleranceRKN,
@@ -527,7 +539,7 @@ func TestPhysicsPointIntegrator(t *testing.T) {
 				},
 				{
 					name: "StepFast",
-					stepFn: func(ig *physics.PointIntegrator, h float64) (float64, md3.Vec, md3.Vec) {
+					stepFn: func(ig *physics.PointIntegrator, h float64) (cosmos.Epoch, md3.Vec, md3.Vec) {
 						return ig.StepFast(h, md3.Vec{})
 					},
 					posTol: posToleranceDPA,
@@ -535,13 +547,15 @@ func TestPhysicsPointIntegrator(t *testing.T) {
 				},
 			} {
 				t.Run(ic.name, func(t *testing.T) {
-					coords := world.GeocentricFromEarthFixedCoords(SBI0, cosmos.EpochFromTT(0))
+					coords := gnco.NewGeocentricFromEarthFixed(world, SBI0, cosmos.EpochFromTT(0))
 					var ig physics.PointIntegrator
-					ig.Configure(&coords, 0, SBI0, VBI0)
+					ig.ConfigureCoord(&coords, cosmos.Epoch{}, SBI0, VBI0)
 					var tNow float64
 					SBI, VBI := SBI0, VBI0
 					for tNow < T {
-						tNow, SBI, VBI = ic.stepFn(&ig, min(dt, T-tNow))
+						var ep cosmos.Epoch
+						ep, SBI, VBI = ic.stepFn(&ig, min(dt, T-tNow))
+						tNow = ep.Sub(cosmos.Epoch{})
 					}
 					// Analytical position/velocity at tNow using Kepler's equation.
 					ta := orbit.TrueAnomalyFromElapsedSincePeriapsis(gravParam, tNow, trueAnomalyTol)
