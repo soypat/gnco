@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/soypat/geometry/md3"
+	"github.com/soypat/gnco/cosmos"
 )
 
 // GeographicVectorFromElevationAndBearing returns a vector in geographic coordinates
