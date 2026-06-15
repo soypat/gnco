@@ -104,28 +104,6 @@ func stepRKN(t testing.TB, rk *RKN1210, tf float64) {
 	}
 }
 
-// BenchmarkRK45Step exercises the adaptive Step path (the one containing the
-// error-norm sqrt) by integrating the harmonic oscillator one period per Loop.
-func BenchmarkRK45Step(b *testing.B) {
-	const (
-		atol = 1e-9
-		rtol = 1e-9
-		tf   = 2 * math.Pi
-	)
-	var rk RK45
-	if err := rk.Configure(Parameters{
-		AbsTolerance: atol, RelTolerance: rtol, MinStep: 1e-8, MaxStep: 0.5,
-	}); err != nil {
-		b.Fatal(err)
-	}
-	rk.Init(IVP1{Y0: []float64{1, 0}, T0: 0, Func: oscRates1})
-	b.ReportAllocs()
-	for b.Loop() {
-		rk.SetState(0, []float64{1, 0})
-		stepRK45(&rk, tf)
-	}
-}
-
 func TestRK45HarmonicOscillator(t *testing.T) {
 	const (
 		atol = 1e-9

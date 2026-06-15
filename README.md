@@ -13,6 +13,10 @@ gnco provides logic for projectile trajectory calculation on a rotating Earth mo
 
 - [`5dof-rocket`](./examples/5dof-rocket/main.go) — 5-DOF sounding rocket simulation. A single-stage solid-fuel rocket launches from a geographic site at 85° elevation with Earth rotation, ISA atmosphere, drag, and a launch-tower hold to prevent a gravity turn at low speed.
 
+- [`keplerian-orbit`](./examples/keplerian-orbit/main.go) — energy-conservation demo: an elliptical orbit propagated with the RKN12(10) integrator at large 300 s steps (~19 steps/orbit), tracking the specific orbital energy `|ΔE/E₀|` to show how well the integrator preserves this invariant.
+
+- [`sun-synchronous-orbit`](./examples/sun-synchronous-orbit/main.go) — sun-synchronous orbit (550 km, 97.8°) propagated with the JGM-2 4×4 spherical-harmonic gravity field and IAU-76/FK5 Earth orientation. Force model validated against GMAT (~1.2 m/day).
+
 ## Install
 How to install package with newer versions of Go (+1.16):
 ```sh
@@ -25,18 +29,21 @@ elliptical orbits for very large integration steps in the order of the hundreds 
 
 Below are some oscillator benchmarks for integrators in this project. Notably RKN12(10) has near ULP precision and is far more precise for adaptive stepping compared with RKF7(8) and RK4(5) and converges in about the same amount of wall-clock time as RK7(8) and much faster than RK4(5).
 ```
-go test ./internal/ode -bench=. -benchmem
+go test ./physics/ode -bench=. -benchmem
 goos: linux
 goarch: amd64
-pkg: github.com/soypat/gnco/internal/ode
+pkg: github.com/soypat/gnco/physics/ode
 cpu: 12th Gen Intel(R) Core(TM) i5-12400F
-BenchmarkRK45Step-12                       82034             14125 ns/op               0 B/op          0 allocs/op
-BenchmarkIVP_noadaptivestep/RK4(5)-12   15809316                73.90 ns/op            0 B/op          0 allocs/op
-BenchmarkIVP_noadaptivestep/RKF7(8)-12    6944835               171.5 ns/op             0 B/op          0 allocs/op
-BenchmarkIVP_noadaptivestep/RKN12(10)-12                 4857708               242.5 ns/op             0 B/op          0 allocs/op
-BenchmarkIVP_adaptiveconvergence/RK4(5)-12                 83965             14250 ns/op                 2.581 errY×1e-9                93.00 steps/op         0 B/op          0 allocs/op
-BenchmarkIVP_adaptiveconvergence/RKF7(8)-12                270642              4290 ns/op                 0.6264 errY×1e-9               16.00 steps/op         0 B/op          0 allocs/op
-BenchmarkIVP_adaptiveconvergence/RKN12(10)-12             254018              4570 ns/op                 0.0000001 errY×1e-9            13.00 steps/op         0 B/op          0 allocs/op
+BenchmarkIVP_noadaptivestep/RK4(5)-12   16229380                70.98 ns/op            0 B/op          0 allocs/op
+BenchmarkIVP_noadaptivestep/RKF7(8)-12   7191062               173.0 ns/op             0 B/op          0 allocs/op
+BenchmarkIVP_noadaptivestep/Verner9-12   5540967               226.4 ns/op             0 B/op          0 allocs/op
+BenchmarkIVP_noadaptivestep/Feagin12-12                  2364345               498.0 ns/op             0 B/op          0 allocs/op
+BenchmarkIVP_noadaptivestep/RKN12(10)-12                 6000030               192.3 ns/op             0 B/op          0 allocs/op
+BenchmarkIVP_adaptiveconvergence/RK4(5)-12                 83816             13752 ns/op                 2.581 errY×1e-9     93.00 steps/op            0 B/op          0 allocs/op
+BenchmarkIVP_adaptiveconvergence/RKF7(8)-12               267368              4120 ns/op                 0.6264 errY×1e-9     16.00 steps/op            0 B/op          0 allocs/op
+BenchmarkIVP_adaptiveconvergence/Verner9-12               293768              3795 ns/op                 0.09069 errY×1e-9     13.00 steps/op            0 B/op          0 allocs/op
+BenchmarkIVP_adaptiveconvergence/Feagin12-12              155316              7209 ns/op                 0.05304 errY×1e-9     13.00 steps/op            0 B/op          0 allocs/op
+BenchmarkIVP_adaptiveconvergence/RKN12(10)-12             323271              3561 ns/op                 0.0000001 errY×1e-9     13.00 steps/op            0 B/op          0 allocs/op
 PASS
-ok      github.com/soypat/gnco/internal/ode     8.220s
+ok      github.com/soypat/gnco/physics/ode      11.628s
 ```
