@@ -32,6 +32,7 @@ local
 *.cov
 
 # Log files and common data formats.
+*.txt
 *.log
 *.Log
 *.LOG
