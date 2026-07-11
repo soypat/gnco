@@ -48,3 +48,4 @@ local
 
 # If running a python script.
 */__pycache__/*
+/5dof-rocket
